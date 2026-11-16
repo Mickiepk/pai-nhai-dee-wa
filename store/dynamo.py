@@ -35,6 +35,9 @@ class DynamoStore:
                 return True
             raise
 
+    def forget_event(self, event_id: str) -> None:
+        self._table.delete_item(Key={"pk": f"EVENT#{event_id}", "sk": "SEEN"})
+
     def get_session(self, group_id: str) -> Session | None:
         item = self._table.get_item(Key={"pk": f"GROUP#{group_id}", "sk": "SESSION#active"}).get("Item")
         return Session.model_validate_json(item["data"]) if item else None

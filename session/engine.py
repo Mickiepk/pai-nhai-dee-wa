@@ -73,6 +73,14 @@ class SessionEngine:
         eid = event.get("webhookEventId")
         if eid and self.store.seen_event(eid, now):
             return  # duplicate delivery
+        try:
+            await self._dispatch(event, now)
+        except Exception:
+            if eid:  # let the SQS retry process it again instead of dropping it
+                self.store.forget_event(eid)
+            raise
+
+    async def _dispatch(self, event: dict[str, Any], now: int) -> None:
         src = event.get("source", {})
         gid = src.get("groupId") or src.get("roomId")
         etype = event.get("type")

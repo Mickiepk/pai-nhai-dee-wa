@@ -19,6 +19,9 @@ class MemoryStore:
         self.events[event_id] = now + EVENT_TTL_S
         return False
 
+    def forget_event(self, event_id: str) -> None:
+        self.events.pop(event_id, None)
+
     def get_session(self, group_id: str) -> Session | None:
         raw = self.sessions.get(group_id)
         return Session.model_validate_json(raw) if raw else None

@@ -107,6 +107,24 @@ async def test_duplicate_event_is_processed_once():
     assert len(line.replies) == 1
 
 
+async def test_failed_event_is_retried_not_dropped():
+    engine, line, *_ = make_engine()
+    ev = text_event(G, "A", "@bot กินไรดีแถวอารีย์")
+    real_reply = line.reply
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("LINE down")
+
+    line.reply = boom
+    try:
+        await engine.handle(ev)
+    except RuntimeError:
+        pass
+    line.reply = real_reply
+    await engine.handle(ev)  # SQS retry of the same event must be processed
+    assert len(line.replies) == 1
+
+
 async def test_announce_and_vote_are_on_request_only():
     engine, line, *_ = make_engine()
     await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
