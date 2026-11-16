@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: ไปไหนดีวะ (Pai-nhai-dee-wa) LINE group bot - pilot stack
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 28
+    Description: Monthly AWS budget alarm in USD (1,000 THB is about USD 28)
+  AlertEmail:
+    Type: String
+    Description: Email that receives budget and DLQ alarms
+  LlmProvider:
+    Type: String
+    Default: gemini
+    AllowedValues: [fake, gemini]
+  PlacesProvider:
+    Type: String
+    Default: google
+    AllowedValues: [fake, google]
+  GeminiPaidTierConfirmed:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Must be "true" (Gemini paid tier) or the bot will not read group chat
+  BotEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Kill switch
+  MaxPlacesCallsPerDay:
+    Type: Number
+    Default: 300
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 256
+    LoggingConfig:
+      LogFormat: Text
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        TABLE_NAME: !Ref Table
+        STORE_PROVIDER: dynamo
+        LINE_PROVIDER: real
+        LLM_PROVIDER: !Ref LlmProvider
+        PLACES_PROVIDER: !Ref PlacesProvider
+        GEMINI_PAID_TIER_CONFIRMED: !Ref GeminiPaidTierConfirmed
+        BOT_ENABLED: !Ref BotEnabled
+        MAX_PLACES_CALLS_PER_DAY: !Ref MaxPlacesCallsPerDay
+        LINE_CHANNEL_SECRET_PARAM: !Sub /pai-nhai-dee-wa/${Stage}/line-channel-secret
+        LINE_CHANNEL_ACCESS_TOKEN_PARAM: !Sub /pai-nhai-dee-wa/${Stage}/line-channel-access-token
+        GEMINI_API_KEY_PARAM: !Sub /pai-nhai-dee-wa/${Stage}/gemini-api-key
+        GOOGLE_PLACES_API_KEY_PARAM: !Sub /pai-nhai-dee-wa/${Stage}/google-places-api-key
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub pai-nhai-dee-wa-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      MessageRetentionPeriod: 345600
+
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true  # one ordered stream per LINE group (MessageGroupId = groupId)
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.webhook.handler
+      Timeout: 5
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref EventQueue
+      FunctionUrlConfig:
+        AuthType: NONE  # LINE signature is verified in code
+      Policies:
+        - SQSSendMessagePolicy: { QueueName: !GetAtt EventQueue.QueueName }
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/*
+
+  WebhookLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WebhookFunction}
+      RetentionInDays: 14
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.worker.handler
+      Timeout: 30
+      ReservedConcurrentExecutions: 5
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/*
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes: [ReportBatchItemFailures]
+
+  WorkerLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WorkerFunction}
+      RetentionInDays: 14
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - { Protocol: email, Endpoint: !Ref AlertEmail }
+
+  DlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Events failed 3 times and landed in the DLQ
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - { Name: QueueName, Value: !GetAtt DeadLetterQueue.QueueName }
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub pai-nhai-dee-wa-${Stage}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  WebhookUrl:
+    Description: Use this URL as the LINE webhook URL (any path works)
+    Value: !GetAtt WebhookFunctionUrl.FunctionUrl
+  TableName:
+    Value: !Ref Table

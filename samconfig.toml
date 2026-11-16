@@ -1,0 +1,9 @@
+version = 0.1
+
+[dev.deploy.parameters]
+stack_name = "pai-nhai-dee-wa-dev"
+region = "ap-southeast-1"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+confirm_changeset = true
+parameter_overrides = "Stage=dev"
