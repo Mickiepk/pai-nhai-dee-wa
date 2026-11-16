@@ -8,6 +8,7 @@ event's reply token. Raw chat text is never stored or logged.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from collections.abc import Callable
@@ -16,11 +17,12 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from adapters.line import LineGateway, Msg
-from adapters.llm import Extractor, RuleExtractor
+from adapters.llm import Extractor, GeminiExtractor, RuleExtractor, looks_undecided
 from adapters.models import MessageDelta
 from adapters.places import Places
 from config import Settings
 from features import cards, search
+from features.geo import format_radius
 from session.merge import apply_delta, avoid_terms
 from session.models import Session, State
 from session.prefilter import worth_reading
@@ -34,6 +36,13 @@ GREETING = ("หวัดดีแก๊ง เราคือ ไปไหน�
 HELP = "เรียกเราแล้วบอกว่าอยากกิน/อยากไปไหน เช่น \"กินไรดีแถวอารีย์\" ได้เลย"
 ASK_AREA = "จะไปแถวไหนกันอะ?"
 AREA_CHOICES = ["สยาม", "อารีย์", "สาทร", "อโศก"]
+CANCELLED = "ยกเลิกการ์ดยืนยันเดิมแล้ว กลับมาหาร้านใหม่กันนะ"
+STALE_CARD = "การ์ดยืนยันนี้ถูกยกเลิกแล้ว ดูการ์ดล่าสุดหรือเรียกเราใหม่ได้เลย"
+
+
+def new_session_id() -> str:
+    """Default id source: random in production. Tests inject a deterministic factory (BUG-20)."""
+    return uuid.uuid4().hex[:8]
 
 
 def _bkk_day(now: int) -> str:
@@ -56,7 +65,8 @@ def strip_mentions(message: dict[str, Any]) -> str:
 
 class SessionEngine:
     def __init__(self, settings: Settings, store: Store, line: LineGateway, llm: Extractor,
-                 places: Places, clock: Callable[[], int] = lambda: int(time.time())):
+                 places: Places, clock: Callable[[], int] = lambda: int(time.time()),
+                 id_factory: Callable[[], str] = new_session_id):
         self.s = settings
         self.store = store
         self.line = line
@@ -64,6 +74,23 @@ class SessionEngine:
         self.rules = RuleExtractor()
         self.places = places
         self.clock = clock
+        self.id_factory = id_factory
+        self._warned_unpaid = False
+
+    # ------------------------------------------------------------ PDPA guard (Q-06, fail closed)
+    def _uses_gemini(self) -> bool:
+        return self.s.llm_provider == "gemini" or isinstance(self.llm, GeminiExtractor)
+
+    def _gemini_allowed(self) -> bool:
+        """Chat text may go to Gemini only on the paid tier: env GEMINI_PAID_TIER=true (or the legacy
+        Settings flag). Anything else = fail closed."""
+        if not self._uses_gemini():
+            return True
+        return os.environ.get("GEMINI_PAID_TIER", "").strip().lower() == "true" or bool(
+            self.s.gemini_paid_tier_confirmed)
+
+    def _chat_reading(self) -> bool:
+        return self._gemini_allowed()  # offline rules always allowed; Gemini only when paid
 
     # ------------------------------------------------------------ entry point
     async def handle(self, event: dict[str, Any]) -> None:
@@ -108,6 +135,11 @@ class SessionEngine:
         return session
 
     async def _extract(self, session: Session | None, text: str, mentioned: bool) -> MessageDelta:
+        if not self._gemini_allowed():  # PDPA: never send chat text to Gemini without the paid tier
+            if not self._warned_unpaid:
+                self._warned_unpaid = True
+                log.warning("GEMINI_PAID_TIER is not true: chat text is NOT sent to Gemini, offline rules only")
+            return self.rules.extract_sync(text, mentioned=mentioned)
         if session is not None and session.llm_calls >= self.s.max_llm_calls_per_session:
             return self.rules.extract_sync(text, mentioned=mentioned)  # free fallback
         if session is not None:
@@ -119,7 +151,7 @@ class SessionEngine:
         return await self.llm.extract(text, mentioned=mentioned, context=ctx)
 
     def _new_session(self, gid: str, now: int) -> Session:
-        return Session(session_id=uuid.uuid4().hex[:8], group_id=gid, started_at=now,
+        return Session(session_id=self.id_factory(), group_id=gid, started_at=now,
                        expires_at=now + self.s.session_minutes * 60)
 
     async def _names(self, gid: str, user_ids: list[str]) -> dict[str, str]:
@@ -135,15 +167,27 @@ class SessionEngine:
                 await self._start(gid, uid, token, strip_mentions(message), now)
             return  # no session: never read the chat
 
+        new_participant = False
         if not mentioned:
-            if message.get("type") == "text" and uid not in session.participants:
+            readable = worth_reading(message.get("type", ""), message.get("text"))
+            # Q-01/Q-02: a participant sent at least one non-prefiltered message (555/stickers don't count)
+            if readable and uid not in session.participants:
                 session.participants.append(uid)
-            if not (self.s.chat_reading_enabled and worth_reading(message.get("type", ""), message.get("text"))):
+                new_participant = True
+            if not (self._chat_reading() and readable):
+                replies0 = (await self._repost_confirm(session)
+                            if new_participant and session.state == State.CONFIRMING else [])
+                if replies0:
+                    await self.line.reply(token, replies0)
                 self.store.put_session(session)
                 return
+        elif uid not in session.participants:
+            new_participant = True
 
         text = strip_mentions(message) if mentioned else message.get("text", "")
         delta = await self._extract(session, text, mentioned)
+        if delta.decision_detected and looks_undecided(text):
+            delta.decision_detected = False  # questions/open answers are never decisions, whatever the LLM said
         apply_delta(session, uid, delta)
         replies: list[Msg] = []
 
@@ -151,6 +195,9 @@ class SessionEngine:
             replies = await self._confirm(session, delta.pick_index)
         elif mentioned:
             replies = await self._answer_mention(session, delta)
+        if (new_participant and session.state == State.CONFIRMING and session.candidate is not None
+                and not any(_is_confirm_card(m) for m in replies)):
+            replies += await self._repost_confirm(session)  # Q-03
 
         if replies:
             await self.line.reply(token, replies)
@@ -180,9 +227,21 @@ class SessionEngine:
         if delta.request == "vote":
             return [cards.vote_stub(session)]
         if delta.request == "search" or delta.needs_answer or delta.radius_km or delta.radius_halve:
-            return await self._search_replies(session, session.group_id, self.clock(),
-                                              exclude_last=delta.rejects_last_suggestion)
+            return await self._replan_search(session, session.group_id, self.clock(),
+                                             exclude_last=delta.rejects_last_suggestion)
         return [cards.text("ฟังอยู่นะ อยากให้หาอะไรเพิ่มก็เรียกได้เลย")]
+
+    def _cancel_confirming(self, session: Session) -> None:
+        session.state, session.candidate, session.acks = State.LISTENING, None, []
+        session.confirm_round += 1  # buttons on the old card are now dead
+
+    async def _replan_search(self, session: Session, gid: str, now: int, *, exclude_last: bool = False) -> list[Msg]:
+        """A new search during the ack wait cancels confirming and goes back to planning (Q-08)."""
+        prefix: list[Msg] = []
+        if session.state == State.CONFIRMING:
+            self._cancel_confirming(session)
+            prefix = [cards.text(CANCELLED)]
+        return prefix + await self._search_replies(session, gid, now, exclude_last=exclude_last)
 
     async def _search_replies(self, session: Session, gid: str, now: int, *, exclude_last: bool = False) -> list[Msg]:
         if not session.area:
@@ -199,14 +258,16 @@ class SessionEngine:
             log.warning("global places cap hit")
             return [cards.text("วันนี้คนใช้เยอะจนเต็มโควตาละ พรุ่งนี้มาใหม่นะ 🙏")]
         if outcome.error == "no_area":  # area not in AREA_CENTERS and geocode failed
-            return [cards.text(f"หาพิกัด{session.area}ไม่เจอ ลองเลือกย่านใกล้ๆ ดูนะ",
+            return [cards.text(f"หาพิกัด{session.area_label}ไม่เจอ ลองเลือกย่านใกล้ๆ ดูนะ",
                                [(a, f"act=area&a={a}&sid={session.session_id}") for a in AREA_CHOICES])]
         if outcome.error == "places_failed":
             return [cards.text("ตอนนี้ค้นร้านไม่ได้ ลองเรียกใหม่อีกทีนะ")]
         if outcome.error == "not_found":
-            return [cards.text(f"ใน {outcome.radius_km:g} กม. จาก{session.area} ไม่เจอที่ตรงเงื่อนไขเลย ลองเปลี่ยนแบบดูไหม?")]
+            reach = f"{format_radius(outcome.radius_km)} จาก{session.area_label}"
+            return [cards.text(f"ใน {reach} ไม่เจอที่ตรงเงื่อนไขเลย ลองเปลี่ยนแบบดูไหม?")]
         session.suggestions = outcome.suggestions
-        header = f"ได้ {len(outcome.suggestions)} ที่ละ ทุกที่ไม่เกิน {outcome.radius_km:g} กม. จาก{session.area}"
+        reach = f"{format_radius(outcome.radius_km)} จาก{session.area_label}"
+        header = f"ได้ {len(outcome.suggestions)} ที่ละ ทุกที่ไม่เกิน {reach}"
         avoid = avoid_terms(session)
         if avoid:
             header += f"\n(ข้าม{'/'.join(sorted(avoid))}ให้ละ มีคนไม่เอาหรือเพิ่งกิน)"
@@ -214,11 +275,18 @@ class SessionEngine:
 
     async def _confirm(self, session: Session, pick: int | None) -> list[Msg]:
         idx = (pick or 1) - 1
-        if idx >= len(session.suggestions):
-            idx = 0
+        if idx < 0 or idx >= len(session.suggestions):  # BUG-15: never confirm a different place silently
+            n = len(session.suggestions)
+            return [cards.text(f"ไม่มีร้านที่ {pick} นะ ตอนนี้มีให้เลือก {n} ที่ เลือกใหม่ได้เลย")]
         session.candidate = session.suggestions[idx]
         session.state = State.CONFIRMING
         session.acks = []
+        session.confirm_round += 1
+        return await self._repost_confirm(session)
+
+    async def _repost_confirm(self, session: Session) -> list[Msg]:
+        """(Re)post the confirmation card with the CURRENT participant list; acks are kept."""
+        assert session.candidate is not None
         names = await self._names(session.group_id, session.participants)
         return [cards.confirm(session, session.candidate, [names[u] for u in session.participants])]
 
@@ -242,14 +310,18 @@ class SessionEngine:
         elif act == "pick" and session.state == State.LISTENING:
             if uid not in session.participants:
                 session.participants.append(uid)
-            replies = await self._confirm(session, int(q.get("i", "1")))
+            i = q.get("i", "1")
+            replies = await self._confirm(session, int(i) if i.isdigit() else 0)
         elif act == "area":
-            session.area, session.area_center = q.get("a"), None
-            replies = await self._search_replies(session, gid, now)
+            session.area, session.area2, session.area_center = q.get("a"), None, None
+            replies = await self._replan_search(session, gid, now)
         elif act == "search":
-            replies = await self._search_replies(session, gid, now)
-        elif act == "ack" and session.state == State.CONFIRMING:
-            replies = self._on_ack(session, uid, q.get("v") == "yes")
+            replies = await self._replan_search(session, gid, now)
+        elif act == "ack":
+            if "r" in q and q["r"] != str(session.confirm_round):
+                replies = [cards.text(STALE_CARD)]  # card from a cancelled/older round (Q-08)
+            elif session.state == State.CONFIRMING:
+                replies = self._on_ack(session, uid, q.get("v") == "yes")
         if replies:
             await self.line.reply(token, replies)
         if not session.ended:
@@ -261,7 +333,7 @@ class SessionEngine:
         if uid not in session.participants:
             session.participants.append(uid)
         if not yes:
-            session.state, session.candidate, session.acks = State.LISTENING, None, []
+            self._cancel_confirming(session)
             return [cards.text("โอเค ยังไม่สรุป คุยกันต่อได้เลย อยากได้แบบไหนบอกมา")]
         if uid not in session.acks:
             session.acks.append(uid)
@@ -271,6 +343,10 @@ class SessionEngine:
             self._end(session)
             return [cards.plan(session, cand)]
         return [cards.text(f"✅ {len(session.acks)}/{len(session.participants)} คนตกลงแล้ว")]
+
+
+def _is_confirm_card(msg: Msg) -> bool:
+    return msg.get("type") == "flex" and str(msg.get("altText", "")).endswith("กดตกลงกันหน่อย")
 
 
 def all_acked(session: Session) -> bool:

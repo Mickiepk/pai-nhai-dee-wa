@@ -3,7 +3,7 @@
 Sandbox rules (docs/TEST_POLICY.md):
 - no network: FakeLine, FakePlaces (or a scenario fixture), MemoryStore
 - frozen clock: starts at FROZEN_NOW and moves only on an explicit `advance` step
-- seeded randomness: uuid4 inside session.engine is replaced by a seeded generator
+- seeded randomness: the engine's session-id source (`id_factory`) is a seeded generator
 - LLM: either the offline RuleExtractor (`llm: rules`) or the REAL GeminiExtractor code path with
   a scripted fake client that returns canned JSON per input (`llm: scripted`). The scripted path
   therefore exercises the production schema validation and rule fallback.
@@ -18,11 +18,9 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 import yaml
 
@@ -177,8 +175,11 @@ class Result:
         return not self.failures
 
 
-def _build(case: dict[str, Any], rng: random.Random | None) -> World:
-    settings = Settings(**(case.get("settings") or {}))
+def _build(case: dict[str, Any], rng: random.Random | None, seed: int = 1234) -> World:
+    cfg = dict(case.get("settings") or {})
+    if case.get("llm") == "scripted":  # the scripted path models a PAID Gemini deployment unless a case says otherwise
+        cfg.setdefault("gemini_paid_tier_confirmed", True)
+    settings = Settings(**cfg)
     names = dict(case.get("names") or DEFAULT_NAMES)
     places = _places_from(case.get("places"))
     if rng is not None:  # shuffled-but-equivalent setup
@@ -190,7 +191,9 @@ def _build(case: dict[str, Any], rng: random.Random | None) -> World:
     llm: Any = ScriptedLLM(case.get("script") or {}) if case.get("llm") == "scripted" else CountingRules()
     store, line, clock = MemoryStore(), SandboxLine(names), SandboxClock()
     pl = SandboxPlaces(places, geo)
-    engine = SessionEngine(settings, store, line, llm, pl, clock=clock)
+    ids = random.Random(seed)  # injected session-id source (BUG-20): no monkeypatching of uuid
+    engine = SessionEngine(settings, store, line, llm, pl, clock=clock,
+                           id_factory=lambda: f"{ids.getrandbits(32):08x}")
     return World(engine, store, line, llm, pl, clock)
 
 
@@ -249,6 +252,10 @@ def _make_event(w: World, step: dict[str, Any], group: str) -> dict[str, Any] | 
         else:
             data = _ACTS[act]
         data += f"&sid={_sid(w, group, t.get('sid', 'current'))}"
+        if act.startswith("ack"):  # like the real card: carry the confirmation round
+            sess = w.store.get_session(group)
+            rnd = (sess.confirm_round if sess else 0) - (1 if t.get("round") == "stale" else 0)
+            data += f"&r={rnd}"
         ev = _event(w, "postback", group, t["user"])
         ev["postback"] = {"data": data}
         return ev
@@ -359,40 +366,38 @@ def _check(w: World, group: str, new: list[tuple[str, list[dict[str, Any]]]], ex
 
 
 async def _run(case: dict[str, Any], seed: int, shuffle_rng: random.Random | None) -> Result:
-    w = _build(case, shuffle_rng)
-    rng = random.Random(seed)
+    w = _build(case, shuffle_rng, seed)
     failures: list[str] = []
     transcript: list[str] = []
-    with mock.patch("session.engine.uuid.uuid4", lambda: uuid.UUID(int=rng.getrandbits(128), version=4)):
-        for i, step in enumerate(case["steps"], start=1):
-            group = step.get("group", "G1")
-            where = f"step {i}"
-            if "advance" in step:
-                w.clock.now += int(step["advance"])
-                transcript.append(f"{i} advance {step['advance']}")
-            if step.get("fail_next_reply"):
-                w.line.fail_next = True
-            if "settings" in step:  # flip a setting mid-scenario (kill switch)
-                for k, v in step["settings"].items():
-                    setattr(w.engine.s, k, v)
-            ev = _make_event(w, step, group)
-            before = len(w.line.replies)
-            crashed = False
-            if ev is not None:
-                w.last_event = ev
-                try:
-                    await w.engine.handle(ev)
-                except Exception as exc:  # noqa: BLE001 - recorded, may be expected
-                    crashed = True
-                    transcript.append(f"{i} CRASH {type(exc).__name__}")
-            new = w.line.replies[before:]
-            label = {k: v for k, v in step.items() if k not in ("expect",)}
-            transcript.append(f"{i} {json.dumps(label, ensure_ascii=False, sort_keys=True)}")
-            for token, msgs in new:
-                transcript.append(f"  -> {token} {json.dumps(msgs, ensure_ascii=False, sort_keys=True)}")
-            if crashed and "crash" not in (step.get("expect") or {}):
-                failures.append(f"{where}: engine raised unexpectedly")
-            failures += _check(w, group, new, step.get("expect") or {}, crashed, where)
+    for i, step in enumerate(case["steps"], start=1):
+        group = step.get("group", "G1")
+        where = f"step {i}"
+        if "advance" in step:
+            w.clock.now += int(step["advance"])
+            transcript.append(f"{i} advance {step['advance']}")
+        if step.get("fail_next_reply"):
+            w.line.fail_next = True
+        if "settings" in step:  # flip a setting mid-scenario (kill switch)
+            for k, v in step["settings"].items():
+                setattr(w.engine.s, k, v)
+        ev = _make_event(w, step, group)
+        before = len(w.line.replies)
+        crashed = False
+        if ev is not None:
+            w.last_event = ev
+            try:
+                await w.engine.handle(ev)
+            except Exception as exc:  # noqa: BLE001 - recorded, may be expected
+                crashed = True
+                transcript.append(f"{i} CRASH {type(exc).__name__}")
+        new = w.line.replies[before:]
+        label = {k: v for k, v in step.items() if k not in ("expect",)}
+        transcript.append(f"{i} {json.dumps(label, ensure_ascii=False, sort_keys=True)}")
+        for token, msgs in new:
+            transcript.append(f"  -> {token} {json.dumps(msgs, ensure_ascii=False, sort_keys=True)}")
+        if crashed and "crash" not in (step.get("expect") or {}):
+            failures.append(f"{where}: engine raised unexpectedly")
+        failures += _check(w, group, new, step.get("expect") or {}, crashed, where)
     if w.llm.unscripted:
         failures.append(f"scripted LLM got unscripted input(s): {w.llm.unscripted}")
     return Result(case["id"], failures, transcript, _snapshot(w))

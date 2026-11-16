@@ -8,10 +8,11 @@ from session.models import Session, UserPrefs
 
 MIN_RADIUS_KM = 1.0
 MAX_RADIUS_KM = 50.0
+MIN_EXPLICIT_RADIUS_KM = 0.1  # "ไม่เกิน 400 ม." must be honoured (BUG-13)
 
 
 def clamp_radius(km: float) -> float:
-    return min(MAX_RADIUS_KM, max(0.5, km))
+    return min(MAX_RADIUS_KM, max(MIN_EXPLICIT_RADIUS_KM, km))
 
 
 def current_radius(session: Session) -> float:
@@ -50,17 +51,21 @@ def apply_delta(session: Session, user_id: str, delta: MessageDelta) -> Session:
     _add(session.group_wants, delta.likes)
     _drop(session.group_wants, delta.dislikes + delta.just_ate)
     if delta.area:
-        if delta.area != session.area:
+        if (delta.area, delta.area2) != (session.area, session.area2):
             session.area_center = None
-        session.area = delta.area
+        session.area, session.area2 = delta.area, delta.area2
     if delta.when:
         session.when = delta.when
+    # Switching intent (food <-> activity) drops the old kind's default radius (BUG-16). On a passive
+    # message with suggestions already shown we keep the kind (bot never re-plans on side chatter).
+    if delta.intent in ("food", "activity") and delta.intent != session.kind and (
+            not session.suggestions or delta.asks_bot):
+        session.kind = delta.intent
+        session.radius_km = None
     if delta.radius_km:  # latest statement wins: explicit value, or halve the current one
         session.radius_km = clamp_radius(delta.radius_km)
     elif delta.radius_halve:
         session.radius_km = max(MIN_RADIUS_KM, round(current_radius(session) / 2, 2))
-    if delta.intent in ("food", "activity") and not session.suggestions:
-        session.kind = delta.intent
     return session
 
 
@@ -77,3 +82,14 @@ def avoid_terms(session: Session) -> set[str]:
 def group_budget(session: Session) -> int | None:
     budgets = [p.budget_max_thb for p in session.prefs.values() if p.budget_max_thb]
     return min(budgets) if budgets else None
+
+
+# Q-10 default: budget (THB per person) -> highest Google price_level kept. Places without a price_level are kept.
+BUDGET_PRICE_LEVELS = [(100, 1), (250, 2), (500, 3)]  # (<= budget, max level); above the last row: 4
+
+
+def max_price_level(budget_thb: int) -> int:
+    for limit, level in BUDGET_PRICE_LEVELS:
+        if budget_thb <= limit:
+            return level
+    return 4

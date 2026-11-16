@@ -37,5 +37,10 @@ def format_km(km: float) -> str:
     return f"~{km * 1000:.0f} ม." if km < 1 else f"~{km:.1f} กม."
 
 
+def format_radius(km: float) -> str:
+    """Radius for headers: "3 กม." or, below 1 km, "400 ม." (BUG-13)."""
+    return f"{km * 1000:g} ม." if km < 1 else f"{km:g} กม."
+
+
 def maps_link(name: str, place_id: str) -> str:
     return f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={quote(place_id)}"

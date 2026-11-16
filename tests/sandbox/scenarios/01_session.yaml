@@ -63,4 +63,4 @@
     - say: [D, "👍👍👍"]
       expect: {silent: true}
     - say: [C, "โอเค"]
-      expect: {silent: true, llm_calls: 1, state: listening, participants: [A, C, D]}
+      expect: {silent: true, llm_calls: 1, state: listening, participants: [A]}  # Q-02: filtered noise never makes a participant

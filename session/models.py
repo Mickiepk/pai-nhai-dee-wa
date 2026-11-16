@@ -39,6 +39,7 @@ class Session(BaseModel):
     started_at: int  # epoch seconds
     expires_at: int  # epoch seconds, also the DynamoDB TTL
     area: str | None = None
+    area2: str | None = None  # "ระหว่าง area กับ area2": anchor = midpoint of the two
     area_center: LatLng | None = None
     group_wants: list[str] = Field(default_factory=list)  # most recent last
     when: str | None = None
@@ -49,7 +50,15 @@ class Session(BaseModel):
     suggestions: list[Suggestion] = Field(default_factory=list)
     candidate: Suggestion | None = None
     acks: list[str] = Field(default_factory=list)  # userIds who tapped ตกลง
+    confirm_round: int = 0  # bumped whenever a confirmation card is posted or cancelled (stale buttons die)
     ended: bool = Field(False, exclude=True)  # runtime flag, never stored
+
+    @property
+    def area_label(self) -> str | None:
+        """Human label of the anchor: "อารีย์" or "กึ่งกลางสยามกับอารีย์"."""
+        if self.area and self.area2:
+            return f"กึ่งกลาง{self.area}กับ{self.area2}"
+        return self.area
 
     def is_expired(self, now: int) -> bool:
         return now >= self.expires_at

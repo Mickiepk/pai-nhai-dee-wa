@@ -35,10 +35,9 @@ def test_determinism(case):
     assert not problems, f"{case['id']} not deterministic: {problems}"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-20")
 def test_session_id_is_deterministic_without_sandbox_seed():
-    """Production engine draws session_id from uuid4 with no injectable source: two fresh runs of
-    the same events give different postback data (sid=...). The sandbox seeds it; prod tests can't."""
+    """BUG-20 regression: the engine takes an injectable `id_factory` (default stays random in prod), so
+    two fresh runs of the same events give identical postback data (sid=...) with no monkeypatching."""
     case = next(c for c in CASES if c["id"] == "SBX-01")
     a, b = run_unseeded_twice(case)
     assert a.transcript == b.transcript and a.final_state == b.final_state

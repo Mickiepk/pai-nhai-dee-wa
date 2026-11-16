@@ -54,18 +54,18 @@
 
 - id: SBX-43
   area: Paid tier ปิด
-  title: llm=gemini + GEMINI_PAID_TIER_CONFIRMED=false -> ไม่ส่งแชตที่ไม่ได้แท็กเข้า LLM แต่ @ ยังทำงาน; temperature=0
+  title: "Q-06 fail closed: ไม่ใช่ paid tier -> ไม่ส่งข้อความแชตเข้า Gemini เลย (แม้ @ บอท) ใช้กฎออฟไลน์; @ ยังทำงาน"
   llm: scripted
   settings: {llm_provider: gemini, gemini_paid_tier_confirmed: false}
   script:
     "กินไรดีแถวอารีย์": {intent: food, request: search, area: "อารีย์", asks_bot: true, needs_answer: true}
   steps:
     - say: [A, "@bot กินไรดีแถวอารีย์"]
-      expect: {contains: ["ได้ 3 ที่ละ"], llm_calls: 1, temperature_zero: true}
+      expect: {contains: ["ได้ 3 ที่ละ"], llm_calls: 0}
     - say: [B, "อยากกินญี่ปุ่น"]
-      expect: {silent: true, llm_calls: 1, participants: [A, B]}
+      expect: {silent: true, llm_calls: 0, participants: [A, B]}
     - say: [B, "ไปร้านนี้แหละ"]
-      expect: {silent: true, llm_calls: 1, state: listening}
+      expect: {silent: true, llm_calls: 0, state: listening}
 
 - id: SBX-44
   area: ไม่เก็บข้อความดิบ
@@ -90,3 +90,19 @@
       expect: {contains: ["ไม่เก็บข้อความ"], state: none}
     - say: [B, "อยากกินเกาหลี"]
       expect: {silent: true, state: none}
+
+- id: SBX-60
+  area: Paid tier เปิด
+  title: GEMINI_PAID_TIER=true -> ข้อความ @ และแชตที่อ่านได้ถูกส่งเข้า Gemini (temperature=0); 555 ยังไม่ถูกส่ง
+  llm: scripted
+  settings: {llm_provider: gemini, gemini_paid_tier_confirmed: true}
+  script:
+    "กินไรดีแถวอารีย์": {intent: food, request: search, area: "อารีย์", asks_bot: true, needs_answer: true}
+    "อยากกินญี่ปุ่น": {likes: ["ญี่ปุ่น"]}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 3 ที่ละ"], llm_calls: 1, temperature_zero: true}
+    - say: [B, "อยากกินญี่ปุ่น"]
+      expect: {silent: true, llm_calls: 2, participants: [A, B]}
+    - say: [C, "555"]
+      expect: {silent: true, llm_calls: 2, participants: [A, B]}

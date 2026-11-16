@@ -60,7 +60,7 @@ def listening_notice(session: Session, minutes: int) -> Msg:
 
 
 def suggestions(session: Session, items: list[Suggestion], header: str) -> list[Msg]:
-    area = session.area or "จุดที่บอก"
+    area = session.area_label or "จุดที่บอก"
     bubbles = []
     for i, s in enumerate(items, start=1):
         body = [
@@ -82,11 +82,12 @@ def confirm(session: Session, cand: Suggestion, names: list[str]) -> Msg:
     body = [
         _t("สรุปว่าไปที่นี่นะ?", weight="bold"),
         _t(cand.name, size="lg", weight="bold"),
-        _t(f"{format_km(cand.distance_km)} จาก{session.area or 'จุดที่บอก'}", size="sm", color="#1DB446"),
+        _t(f"{format_km(cand.distance_km)} จาก{session.area_label or 'จุดที่บอก'}", size="sm", color="#1DB446"),
         _t("รอทุกคนกดตกลง: " + ", ".join(names), size="sm", color="#666666"),
     ]
-    footer = [_postback("ตกลง ✅", f"act=ack&v=yes&sid={sid}", "primary"),
-              _postback("ยังก่อน", f"act=ack&v=no&sid={sid}")]
+    r = session.confirm_round  # a card from an earlier round is rejected (Q-08)
+    footer = [_postback("ตกลง ✅", f"act=ack&v=yes&sid={sid}&r={r}", "primary"),
+              _postback("ยังก่อน", f"act=ack&v=no&sid={sid}&r={r}")]
     return flex(f"ไป {cand.name} ไหม? กดตกลงกันหน่อย", _bubble(body, footer))
 
 
@@ -94,7 +95,7 @@ def plan(session: Session, cand: Suggestion) -> Msg:
     body = [
         _t("🎉 จบ! ได้ที่ไปละ", weight="bold"),
         _t(cand.name, size="lg", weight="bold"),
-        _t(f"{format_km(cand.distance_km)} จาก{session.area or 'จุดที่บอก'} (ระยะเส้นตรง)", size="sm"),
+        _t(f"{format_km(cand.distance_km)} จาก{session.area_label or 'จุดที่บอก'} (ระยะเส้นตรง)", size="sm"),
         _t(f"เวลา: {session.when}" if session.when else "เวลา: ยังไม่ได้นัด ตกลงกันในแชตเลย", size="sm"),
         _t(ATTRIBUTION, size="xxs", color="#999999"),
     ]
@@ -103,8 +104,9 @@ def plan(session: Session, cand: Suggestion) -> Msg:
 
 def announcement(session: Session, names: dict[str, str]) -> Msg:
     lines = ["📣 สรุปตอนนี้"]
-    if session.area:
-        lines.append(f"ย่าน: {session.area}")
+    if session.area_label:
+        lines.append(f"ย่าน: {session.area_label}")
+    lines.append(f"เวลา: {session.when}" if session.when else "เวลา: ยังไม่ได้นัด")  # BUG-19
     if session.group_wants:
         lines.append("อยากได้: " + ", ".join(session.group_wants[-3:]))
     for uid, p in session.prefs.items():
@@ -118,7 +120,9 @@ def announcement(session: Session, names: dict[str, str]) -> Msg:
         if bits:
             lines.append(f"• {names.get(uid, 'เพื่อน')}: " + " · ".join(bits))
     if session.candidate:
-        lines.append(f"ตัวเต็ง: {session.candidate.name}")
+        lines.append(f"ที่: {session.candidate.name}")
+    else:
+        lines.append("ที่: ยังไม่ได้เลือก")
     return text("\n".join(lines), [("หาร้านให้หน่อย", f"act=search&sid={session.session_id}")])
 
 

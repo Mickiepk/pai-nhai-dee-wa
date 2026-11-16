@@ -36,13 +36,39 @@ async def test_kill_switch_silences_bot():
     assert line.replies == [] and llm.calls == 0
 
 
-async def test_gemini_without_paid_tier_does_not_read_chat():
+async def test_gemini_without_paid_tier_never_sends_chat_text(monkeypatch, caplog):
+    """Q-06 (PDPA, fail closed): not the paid tier -> no text to Gemini at all, not even @mentions."""
+    monkeypatch.delenv("GEMINI_PAID_TIER", raising=False)
     engine, line, llm, *_ = make_engine(llm_provider="gemini", gemini_paid_tier_confirmed=False)
     assert not engine.s.chat_reading_enabled
-    await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
-    await engine.handle(text_event(G, "B", "อยากกินชาบูมาก"))
-    assert llm.calls == 1  # only the @mention
+    with caplog.at_level("WARNING"):
+        await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
+        await engine.handle(text_event(G, "B", "อยากกินชาบูมาก"))
+        await engine.handle(text_event(G, "A", "@bot มีร้านเกาหลีไหม"))
+    assert llm.calls == 0  # nothing went to the (fake) Gemini
+    assert "ได้ 3 ที่ละ" in line.replies[0][1][1]["text"]  # offline rules still answer the @mention
     assert "B" in engine.store.get_session(G).participants  # still counted as participant
+    warns = [r for r in caplog.records if "GEMINI_PAID_TIER" in r.getMessage()]
+    assert len(warns) == 1  # one-line warning, logged once
+
+
+async def test_gemini_paid_tier_env_must_be_exactly_true(monkeypatch):
+    for value in ("false", "1", "yes", ""):
+        monkeypatch.setenv("GEMINI_PAID_TIER", value)
+        engine, _line, llm, *_ = make_engine(llm_provider="gemini")
+        await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
+        assert llm.calls == 0, value
+    monkeypatch.setenv("GEMINI_PAID_TIER", "true")
+    engine, _line, llm, *_ = make_engine(llm_provider="gemini")
+    await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
+    assert llm.calls == 1
+
+
+async def test_offline_rules_provider_is_not_gated(monkeypatch):
+    monkeypatch.delenv("GEMINI_PAID_TIER", raising=False)
+    engine, _line, llm, *_ = make_engine()  # llm_provider=fake: nothing leaves the process
+    await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
+    assert llm.calls == 1
 
 
 async def test_gemini_with_paid_tier_reads_chat():

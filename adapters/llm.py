@@ -43,11 +43,30 @@ AREAS = [
 _FOOD_INTENT = ["กินไร", "กินอะไร", "กินไหร", "กินอัลไล", "หิว", "ร้านอาหาร", "ข้าว", "มื้อ", "eat"]
 _ACTIVITY_INTENT = ["ทำไร", "ทำอะไร", "ทำไหร", "เที่ยว", "ไปไหนดี", "เล่นอะไร", "activity"]
 _MEETUP_INTENT = ["นัดเจอ", "เจอกันกี่โมง", "นัดกัน"]
+# Explicit "we pick this one" phrases only. Bare "ตกลงไป..." / "จบที่..." were removed (BUG-11): they
+# matched questions like "ตกลงไปไหนกันแน่" and vague "จบที่ไหนก็ได้".
 _DECISION = ["ไปร้านนี้", "เอาร้านนี้", "ไปที่นี่", "เอาที่นี่", "ไปร้านที่", "เอาร้านที่",
-             "ตกลงไป", "จบที่", "เอาอันนี้แหละ", "ไปอันนี้"]
+             "เอาอันนี้แหละ", "ไปอันนี้", "ตกลงไปร้าน", "ตกลงเอาร้าน"]
+# A message that asks something or stays open is never a decision.
+_UNDECIDED = ["ไหม", "มั้ย", "หรือเปล่า", "ป่ะ", "กันแน่", "ก็ได้", "ที่ไหน", "ร้านไหน", "ดีวะ", "?", "？"]
 _FAR = ["ไกลไป", "ไกลจัง", "ไกลเกิน", "ไกลอะ", "ไกลมาก", "too far"]
 _RADIUS = re.compile(
     r"(?:ไม่เกิน|ภายใน|within|under|<=?)\s*(\d{1,2}(?:\.\d)?)\s*(?:กม|กิโล(?:เมตร)?|โล|km|k\b)")
+_RADIUS_M = re.compile(  # BUG-13: meters, "ไม่เกิน 400 ม." / "ภายใน 500 เมตร" / "within 300 m"
+    r"(?:ไม่เกิน|ภายใน|within|under|<=?)\s*(\d{2,4})\s*(?:เมตร|ม\.|ม(?![ก-๙])|meters?|m\b)")
+_BETWEEN = ["ระหว่าง", "กึ่งกลาง", "ตรงกลาง", "between"]
+
+
+def looks_undecided(text: str) -> bool:
+    """True for questions / open-ended phrasing. Code-side guard on top of any extractor (rules or LLM)."""
+    t = normalize(text.strip())
+    return any(k in t for k in _UNDECIDED)
+
+
+def find_areas(t: str) -> list[str]:
+    """Known areas in the order they were SAID (not the order of the AREAS table)."""
+    hits = sorted((t.index(a), a) for a in AREAS if a in t)
+    return [a for _i, a in hits]
 _NEGATIVE = ["ไม่เอา", "ไม่กิน", "ไม่อยาก", "เบื่อ", "ไม่ไป"]
 
 
@@ -78,10 +97,11 @@ class RuleExtractor:
         elif any(k in t for k in _MEETUP_INTENT):
             d.intent = "meetup"
 
-        for area in AREAS:
-            if area in t:
-                d.area = area
-                break
+        areas = find_areas(t)
+        if areas:
+            d.area = areas[0]  # "A หรือ B" -> the one said first (BUG-18)
+            if len(areas) > 1 and any(k in t for k in _BETWEEN):
+                d.area2 = areas[1]  # "ระหว่าง A กับ B" -> midpoint (BUG-14)
 
         carry_ate = False
         carry_negative = False  # "ไม่เอา japanese": a bare negative word negates the next clause
@@ -107,6 +127,8 @@ class RuleExtractor:
 
         if m := _RADIUS.search(t):
             d.radius_km = float(m.group(1))
+        elif m := _RADIUS_M.search(t):
+            d.radius_km = round(int(m.group(1)) / 1000, 3)
         elif any(k in t for k in _FAR):
             d.radius_halve = True
 
@@ -117,7 +139,8 @@ class RuleExtractor:
         elif m := re.search(r"(\d{1,2})\s*ทุ่ม", t):
             d.when = f"{int(m.group(1)) + 18:02d}:00"
 
-        if not any(n in t for n in _NEGATIVE) and any(k in t for k in _DECISION):
+        if (not any(n in t for n in _NEGATIVE) and not looks_undecided(t)
+                and any(k in t for k in _DECISION)):
             d.decision_detected = True
             if m := re.search(r"(?:ร้าน|อัน)ที่\s*([1-3])", t):
                 d.pick_index = int(m.group(1))
@@ -143,10 +166,12 @@ Friends are deciding where to eat (food), what to do (activity) or when/where to
 Return ONLY JSON for the schema. Copy short Thai keywords; never copy the full message.
 - likes/dislikes: cuisines, food types, activities, e.g. "ญี่ปุ่น", "บุฟเฟต์นานาชาติ", "โบว์ลิ่ง".
 - just_ate: food the speaker just ate (so avoid it).
-- area: a Bangkok area/landmark if named.
+- area: a Bangkok area/landmark if named (the first one said). area2: only for "between X and Y"
+  ("ระหว่าง X กับ Y"): the second place.
 - radius_km: explicit max distance in km ("ไม่เกิน 5 กม.", "within 5 km"). radius_halve: "ไกลไป" (too far).
 - rejects_last_suggestion: the speaker rejects the bot's last suggestions.
 - decision_detected: the group settles on a place, e.g. "โอเค งั้นไปร้านนี้". pick_index if they say which (1-3).
+  Questions ("ตกลงไปไหนกันแน่") and open answers ("ที่ไหนก็ได้") are NOT decisions.
 - request (only if mentioned=true): search | announce | vote | stop | none.
 - asks_bot: the message is addressed to the bot. needs_answer: the bot should reply.
 """

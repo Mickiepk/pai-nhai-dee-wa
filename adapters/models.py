@@ -21,6 +21,7 @@ class MessageDelta(BaseModel):
     intent: Intent = "none"
     request: Request = "none"  # what the speaker wants the bot to do (if anything)
     area: str | None = None  # e.g. "อารีย์"
+    area2: str | None = None  # second area of "ระหว่าง X กับ Y" (search anchors on the midpoint)
     likes: list[str] = Field(default_factory=list)  # e.g. ["ญี่ปุ่น"], ["บุฟเฟต์นานาชาติ"]
     dislikes: list[str] = Field(default_factory=list)
     just_ate: list[str] = Field(default_factory=list)

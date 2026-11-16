@@ -10,7 +10,7 @@ from adapters.models import LatLng, PlaceCandidate
 from adapters.places import Places
 from features import activity, food
 from features.geo import AREA_CENTERS, haversine_km, maps_link
-from session.merge import avoid_terms, current_radius
+from session.merge import avoid_terms, current_radius, group_budget, max_price_level
 from session.models import Session, Suggestion
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class SearchOutcome:
 def build_query(session: Session) -> str:
     base = activity.BASE_QUERY if session.kind == "activity" else food.BASE_QUERY
     want = session.group_wants[-1] if session.group_wants else ""
-    return " ".join(x for x in (want or base, session.area or "") if x)
+    return " ".join(x for x in (want or base, session.area_label or "") if x)
 
 
 class PlacesCapReached(Exception):
@@ -41,12 +41,23 @@ async def resolve_center(session: Session, places: Places, spend: Spend | None =
         return session.area_center
     if not session.area:
         return None
-    center = AREA_CENTERS.get(session.area)
+    first = await _area_point(session.area, places, spend)
+    if first is not None and session.area2:  # "ระหว่าง A กับ B": anchor on the midpoint (BUG-14)
+        second = await _area_point(session.area2, places, spend)
+        center = (LatLng(lat=round((first.lat + second.lat) / 2, 6), lng=round((first.lng + second.lng) / 2, 6))
+                  if second is not None else None)
+    else:
+        center = first
+    session.area_center = center
+    return center
+
+
+async def _area_point(name: str, places: Places, spend: Spend | None) -> LatLng | None:
+    center = AREA_CENTERS.get(name)
     if center is None:
         if spend is not None and not spend():  # a geocode lookup is a billable Places call too
             raise PlacesCapReached
-        center = await places.geocode(session.area)
-    session.area_center = center
+        center = await places.geocode(name)
     return center
 
 
@@ -56,14 +67,18 @@ def _avoided(place: PlaceCandidate, avoid: set[str]) -> bool:
 
 
 def rank(cands: list[PlaceCandidate], center: LatLng, radius_km: float,
-         avoid: set[str], exclude_ids: set[str]) -> list[PlaceCandidate]:
+         avoid: set[str], exclude_ids: set[str], budget_thb: int | None = None) -> list[PlaceCandidate]:
     kept: list[PlaceCandidate] = []
+    max_level = max_price_level(budget_thb) if budget_thb else None
     for c in cands:
         c.distance_km = round(haversine_km(center, c.latlng), 2)
-        if c.distance_km <= radius_km and c.place_id not in exclude_ids and not _avoided(c, avoid):
-            kept.append(c)
-    # rating first, then closer
-    kept.sort(key=lambda c: (-(c.rating or 0), c.distance_km or 0))
+        if c.distance_km > radius_km or c.place_id in exclude_ids or _avoided(c, avoid):
+            continue
+        if max_level is not None and c.price_level is not None and c.price_level > max_level:
+            continue  # over budget (BUG-12); unknown price is kept (Q-10)
+        kept.append(c)
+    # rating first, then closer, then place_id so ties never depend on API order (BUG-17)
+    kept.sort(key=lambda c: (-(c.rating or 0), c.distance_km or 0, c.place_id))
     return kept[:3]
 
 
@@ -84,7 +99,7 @@ async def search(session: Session, places: Places, *, exclude_last: bool = False
     except Exception as exc:
         log.warning("places failed (%s)", type(exc).__name__)
         return SearchOutcome([], radius, "places_failed")
-    top = rank(cands, center, radius, avoid_terms(session), exclude)
+    top = rank(cands, center, radius, avoid_terms(session), exclude, group_budget(session))
     if not top:
         return SearchOutcome([], radius, "not_found")
     return SearchOutcome(

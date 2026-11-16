@@ -87,7 +87,7 @@
       expect: {contains: ["ได้ 3 ที่ละ"]}
     - say: [B, "เอาร้านนี้"]
       expect: {state: confirming, candidate: เวิลด์บุฟเฟต์}
-    - say: [C, "ไปร้านนี้แหละ"]
+    - say: [B, "ไปร้านนี้แหละ"]
       expect: {silent: true, state: confirming, candidate: เวิลด์บุฟเฟต์}
 
 - id: SBX-52
@@ -96,7 +96,6 @@
   places:
     - {id: tie-b, name: "[ตัวอย่าง] ร้านบี", lat: 13.7800, lng: 100.5450, tags: ["ไทย"], rating: 4.5}
     - {id: tie-a, name: "[ตัวอย่าง] ร้านเอ", lat: 13.7800, lng: 100.5450, tags: ["ไทย"], rating: 4.5}
-  determinism_bug: BUG-17
   steps:
     - say: [A, "@bot กินไรดีแถวอารีย์"]
       expect: {contains: ["ได้ 2 ที่ละ"]}
