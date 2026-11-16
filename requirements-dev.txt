@@ -2,4 +2,5 @@
 pytest>=8
 pytest-asyncio>=0.23
 moto[dynamodb,sqs]>=5
+psycopg[binary]>=3.1   # local env: STORE=postgres (not needed on Lambda)
 ruff>=0.5

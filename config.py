@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+LOCAL_DATABASE_URL = "postgresql://pnd:pnd@localhost:54329/pnd"  # scripts/local_pg.sh / docker-compose.yml
+
 
 def _bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
@@ -35,7 +37,8 @@ class Settings(BaseModel):
     llm_provider: Literal["fake", "gemini"] = "fake"
     places_provider: Literal["fake", "google"] = "fake"
     line_provider: Literal["fake", "real"] = "fake"
-    store_provider: Literal["memory", "dynamo"] = "memory"
+    store_provider: Literal["memory", "postgres", "dynamo"] = "memory"
+    database_url: str = LOCAL_DATABASE_URL  # used when STORE=postgres (local env)
     table_name: str = "pai-nhai-dee-wa-dev"
     gemini_model: str = "gemini-2.5-flash-lite"
 
@@ -108,7 +111,8 @@ def load_settings() -> Settings:
         llm_provider=e("LLM_PROVIDER", "fake"),  # type: ignore[arg-type]
         places_provider=e("PLACES_PROVIDER", "fake"),  # type: ignore[arg-type]
         line_provider=e("LINE_PROVIDER", "fake"),  # type: ignore[arg-type]
-        store_provider=e("STORE_PROVIDER", "memory"),  # type: ignore[arg-type]
+        store_provider=e("STORE") or e("STORE_PROVIDER", "memory"),  # type: ignore[arg-type]
+        database_url=e("DATABASE_URL") or LOCAL_DATABASE_URL,
         table_name=e("TABLE_NAME", "pai-nhai-dee-wa-dev"),
         gemini_model=e("GEMINI_MODEL", "gemini-2.5-flash-lite"),
         gemini_paid_tier_confirmed=_bool("GEMINI_PAID_TIER_CONFIRMED"),

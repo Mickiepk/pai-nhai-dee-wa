@@ -18,6 +18,10 @@ def build_engine(settings: Settings, *, store: Store | None = None, line: LineGa
             from store.dynamo import DynamoStore
 
             store = DynamoStore(settings.table_name)
+        elif settings.store_provider == "postgres":
+            from store.postgres import PostgresStore
+
+            store = PostgresStore(settings.database_url)
         else:
             store = MemoryStore()
     if line is None:

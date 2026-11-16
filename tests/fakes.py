@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from adapters.line import FakeLine
 from adapters.llm import RuleExtractor
 from adapters.models import MessageDelta
 from adapters.places import FakePlaces
+from config import LOCAL_DATABASE_URL as DEFAULT_PG_URL  # noqa: E402
 from config import Settings
 from session.engine import SessionEngine
 from store.memory import MemoryStore
+
+
+def make_store():
+    """STORE=postgres runs the whole suite against the local Postgres (`make test-pg`)."""
+    if os.environ.get("STORE") == "postgres":
+        from store.postgres import PostgresStore
+
+        store = PostgresStore(os.environ.get("DATABASE_URL", DEFAULT_PG_URL))
+        store.reset()  # every test starts clean, like a fresh MemoryStore
+        return store
+    return MemoryStore()
 
 
 class CountingLLM(RuleExtractor):
@@ -36,5 +49,5 @@ def make_engine(**overrides: Any) -> tuple[SessionEngine, FakeLine, CountingLLM,
     settings = Settings(**overrides)
     line = FakeLine(names={"A": "เอ", "B": "บี", "C": "ซี"})
     llm, places, clock = CountingLLM(), FakePlaces(), Clock()
-    engine = SessionEngine(settings, MemoryStore(), line, llm, places, clock=clock)
+    engine = SessionEngine(settings, make_store(), line, llm, places, clock=clock)
     return engine, line, llm, places, clock

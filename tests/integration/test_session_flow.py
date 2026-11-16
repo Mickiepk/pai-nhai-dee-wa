@@ -140,7 +140,7 @@ async def test_raw_chat_text_is_never_stored():
     secret_line = "ไม่เอาอันนี้ อยากกินญี่ปุ่น เบอร์ฉัน0812345678"
     await engine.handle(text_event(G, "A", "@bot กินไรดีแถวอารีย์"))
     await engine.handle(text_event(G, "B", secret_line))
-    stored = engine.store.sessions[G]
+    stored = engine.store.dump()
     assert "0812345678" not in stored and secret_line not in stored
 
 

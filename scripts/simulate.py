@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
 
 from adapters.line import FakeLine
-from config import Settings, load_dotenv, load_settings
+from config import LOCAL_DATABASE_URL, Settings, load_dotenv, load_settings
 from scripts.events import postback_event, text_event
 from scripts.render import render
 from session.engine import SessionEngine
@@ -35,6 +36,15 @@ def make_sim(live: bool) -> tuple[SessionEngine, FakeLine]:
     if live:
         settings = settings.model_copy(update={"llm_provider": "gemini", "places_provider": "google"})
     line = FakeLine(names={u: n for u, n in NAMES.items()})
+    store_name = os.environ.get("STORE", "memory")  # STORE=postgres make simulate -> local Postgres
+    if store_name == "postgres":
+        settings = settings.model_copy(update={
+            "store_provider": "postgres",
+            "database_url": os.environ.get("DATABASE_URL") or LOCAL_DATABASE_URL})
+        engine = build_engine(settings, line=line)
+        engine.store.reset()  # a simulation always starts from an empty database
+        print("  (store: postgres)")
+        return engine, line
     return build_engine(settings, store=MemoryStore(), line=line), line
 
 
