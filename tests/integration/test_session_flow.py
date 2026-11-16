@@ -124,3 +124,12 @@ async def test_raw_chat_text_is_never_stored():
     await engine.handle(text_event(G, "B", secret_line))
     stored = engine.store.sessions[G]
     assert "0812345678" not in stored and secret_line not in stored
+
+
+async def test_unknown_area_asks_again_instead_of_empty_card():
+    """QA regression: area the rules know but AREA_CENTERS lacks (บางนา) + geocode miss."""
+    engine, line, *_ = make_engine()
+    await engine.handle(text_event(G, "A", "@bot กินไรดีแถวบางนา"))
+    last = _texts(line)[-1]
+    assert "หาพิกัดบางนาไม่เจอ" in last
+    assert "ได้ 0 ที่" not in "".join(_texts(line))

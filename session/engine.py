@@ -187,6 +187,9 @@ class SessionEngine:
             return [cards.text("วันนี้คนใช้เยอะจนเต็มโควตาละ พรุ่งนี้มาใหม่นะ 🙏")]
 
         outcome = await search.search(session, self.places, exclude_last=exclude_last)
+        if outcome.error == "no_area":  # area not in AREA_CENTERS and geocode failed
+            return [cards.text(f"หาพิกัด{session.area}ไม่เจอ ลองเลือกย่านใกล้ๆ ดูนะ",
+                               [(a, f"act=area&a={a}&sid={session.session_id}") for a in AREA_CHOICES])]
         if outcome.error == "places_failed":
             return [cards.text("ตอนนี้ค้นร้านไม่ได้ ลองเรียกใหม่อีกทีนะ")]
         if outcome.error == "not_found":

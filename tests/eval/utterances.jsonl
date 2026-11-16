@@ -1,0 +1,27 @@
+{"id": "u01", "text": "กินไรดีแถวอารีย์", "mentioned": true, "intent": "food", "area": "อารีย์", "request": "search"}
+{"id": "u02", "text": "หิวแล้ว แถวสยามมีไรกินบ้าง", "mentioned": true, "intent": "food", "area": "สยาม", "request": "search"}
+{"id": "u03", "text": "ทำไรดีวันเสาร์ แถวทองหล่อ", "mentioned": true, "intent": "activity", "area": "ทองหล่อ", "request": "search"}
+{"id": "u04", "text": "ไปไหนดีแถวสีลม", "mentioned": true, "intent": "activity", "area": "สีลม", "request": "search"}
+{"id": "u05", "text": "อยากไปโบว์ลิ่ง", "mentioned": false, "intent": "activity", "likes": ["โบว์ลิ่ง"]}
+{"id": "u06", "text": "ไม่เอาอันนี้ อยากกินญี่ปุ่น", "mentioned": false, "intent": "food", "likes": ["ญี่ปุ่น"], "rejects": true}
+{"id": "u07", "text": "เพิ่งกินญี่ปุ่นมา เอาเกาหลีได้ไหม", "mentioned": false, "intent": "food", "just_ate": ["ญี่ปุ่น"], "likes": ["เกาหลี"]}
+{"id": "u08", "text": "ไปบุฟเฟต์นานาชาติกันดีกว่า", "mentioned": false, "intent": "food", "likes": ["บุฟเฟต์นานาชาติ"]}
+{"id": "u09", "text": "แถวอารีย์มีบุฟเฟต์นานาชาติไหม", "mentioned": true, "intent": "food", "area": "อารีย์", "request": "search"}
+{"id": "u10", "text": "โอเค ไปร้านนี้แหละ", "mentioned": false, "intent": "none", "decision": true}
+{"id": "u11", "text": "เอาร้านที่ 2", "mentioned": false, "intent": "none", "decision": true, "pick": 2}
+{"id": "u12", "text": "ไม่เอาร้านนี้", "mentioned": false, "intent": "none", "decision": false, "rejects": true}
+{"id": "u13", "text": "ไม่กินชาบู งบ 300", "mentioned": false, "intent": "none", "dislikes": ["ชาบู"], "budget": 300}
+{"id": "u14", "text": "หมูกระทะป่ะ 2 ทุ่ม", "mentioned": false, "intent": "food", "likes": ["หมูกระทะ"], "when": "20:00"}
+{"id": "u15", "text": "ประกาศหน่อย", "mentioned": true, "intent": "none", "request": "announce"}
+{"id": "u16", "text": "โหวตหน่อย", "mentioned": true, "intent": "none", "request": "vote"}
+{"id": "u17", "text": "หยุดฟังได้แล้ว", "mentioned": true, "intent": "none", "request": "stop"}
+{"id": "u18", "text": "พอแล้วๆ", "mentioned": true, "intent": "none", "request": "stop"}
+{"id": "u19", "text": "นัดเจอกันกี่โมงดี 19:30", "mentioned": false, "intent": "meetup", "when": "19:30"}
+{"id": "u20", "text": "เบื่อส้มตำละ", "mentioned": false, "intent": "none", "dislikes": ["ส้มตำ"]}
+{"id": "u21", "text": "คาราโอเกะแถวรัชดาดีป่ะ 😆", "mentioned": true, "intent": "activity", "area": "รัชดา", "request": "search"}
+{"id": "u22", "text": "ข้าวเย็นนี้ ชาบูแถวอโศก งบ 500", "mentioned": true, "intent": "food", "area": "อโศก", "request": "search", "budget": 500}
+{"id": "u23", "text": "เมื่อวานดูบอลมันส์มาก", "mentioned": false, "intent": "none"}
+{"id": "u24", "text": "พรุ่งนี้ต้องตื่นเช้า", "mentioned": false, "intent": "none"}
+{"id": "u25", "text": "กินไรดีแถวอารีย", "mentioned": true, "intent": "food", "area": "อารีย์", "request": "search", "note": "typo: missing ์ (known hard for rules)"}
+{"id": "u26", "text": "หมูกะทะกันมั้ย", "mentioned": false, "intent": "food", "likes": ["หมูกระทะ"], "note": "typo/slang spelling (known hard for rules)"}
+{"id": "u27", "text": "wanna eat sushi near Siam", "mentioned": true, "intent": "food", "area": "สยาม", "request": "search", "note": "English (known hard for rules)"}
