@@ -16,9 +16,12 @@ _SECRETS = {
 }
 
 
-def settings_from_ssm() -> Settings:
+def settings_from_ssm(only: tuple[str, ...] | None = None) -> Settings:
+    """Fetch secrets from SSM. `only` limits which *_PARAM env vars are read (least privilege:
+    each Lambda role may be allowed to read just its own parameters)."""
     settings = load_settings()
-    names = {env: os.environ[env] for env in _SECRETS if os.environ.get(env)}
+    wanted = [env for env in _SECRETS if only is None or env in only]
+    names = {env: os.environ[env] for env in wanted if os.environ.get(env)}
     if not names:
         return settings
     resp = boto3.client("ssm").get_parameters(Names=list(names.values()), WithDecryption=True)

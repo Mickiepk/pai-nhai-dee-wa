@@ -13,7 +13,9 @@ Parameters:
     Description: Monthly AWS budget alarm in USD (1,000 THB is about USD 28)
   AlertEmail:
     Type: String
-    Description: Email that receives budget and DLQ alarms
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: must be a valid email address
+    Description: Email that receives budget and DLQ alarms (SNS sends a confirmation mail - click it!)
   LlmProvider:
     Type: String
     Default: gemini
@@ -35,6 +37,18 @@ Parameters:
   MaxPlacesCallsPerDay:
     Type: Number
     Default: 300
+  WebhookReservedConcurrency:
+    Type: Number
+    Default: 10
+    Description: Caps webhook parallelism (cost/abuse guard). -1 = no reservation. New AWS accounts with a total limit of 10 must use -1 (see docs/DEPLOY.md)
+  WorkerReservedConcurrency:
+    Type: Number
+    Default: 5
+    Description: Caps worker parallelism (limits Gemini/Places spend). -1 = no reservation (see docs/DEPLOY.md)
+
+Conditions:
+  ReserveWebhook: !Not [!Equals [!Ref WebhookReservedConcurrency, -1]]
+  ReserveWorker: !Not [!Equals [!Ref WorkerReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -71,19 +85,22 @@ Resources:
       KeySchema:
         - { AttributeName: pk, KeyType: HASH }
         - { AttributeName: sk, KeyType: RANGE }
-      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }  # sessions/counters expire by themselves (PDPA: no long-term storage)
 
   DeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
       FifoQueue: true
-      MessageRetentionPeriod: 345600
+      MessageRetentionPeriod: 1209600  # 14 days: time to inspect failed events
+      SqsManagedSseEnabled: true
 
   EventQueue:
     Type: AWS::SQS::Queue
     Properties:
       FifoQueue: true  # one ordered stream per LINE group (MessageGroupId = groupId)
-      VisibilityTimeout: 180
+      VisibilityTimeout: 180  # >= 6x worker timeout
+      MessageRetentionPeriod: 3600  # LINE reply tokens are short-lived; stale events are useless
+      SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
         maxReceiveCount: 3
@@ -94,6 +111,7 @@ Resources:
       CodeUri: .
       Handler: handlers.webhook.handler
       Timeout: 5
+      ReservedConcurrentExecutions: !If [ReserveWebhook, !Ref WebhookReservedConcurrency, !Ref AWS::NoValue]
       Environment:
         Variables:
           QUEUE_URL: !Ref EventQueue
@@ -104,13 +122,13 @@ Resources:
         - Statement:
             - Effect: Allow
               Action: ssm:GetParameters
-              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/*
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/line-channel-secret  # webhook needs only the signature secret
 
   WebhookLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${WebhookFunction}
-      RetentionInDays: 14
+      RetentionInDays: 7
 
   WorkerFunction:
     Type: AWS::Serverless::Function
@@ -118,13 +136,18 @@ Resources:
       CodeUri: .
       Handler: handlers.worker.handler
       Timeout: 30
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If [ReserveWorker, !Ref WorkerReservedConcurrency, !Ref AWS::NoValue]
       Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - Statement:
             - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt Table.Arn
+            - Effect: Allow
               Action: ssm:GetParameters
-              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/*
+              Resource:
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/line-channel-access-token
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/gemini-api-key
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pai-nhai-dee-wa/${Stage}/google-places-api-key
       Events:
         Queue:
           Type: SQS
@@ -137,7 +160,7 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${WorkerFunction}
-      RetentionInDays: 14
+      RetentionInDays: 7
 
   AlarmTopic:
     Type: AWS::SNS::Topic
@@ -160,6 +183,38 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       AlarmActions: [!Ref AlarmTopic]
 
+  WorkerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Worker Lambda raised errors (check CloudWatch Logs, no chat text is logged)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref WorkerFunction }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  WebhookTrafficAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Unusual webhook traffic (more than 3,000 calls/hour) - possible abuse or loop; consider BotEnabled=false
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref WebhookFunction }
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 3000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
   MonthlyBudget:
     Type: AWS::Budgets::Budget
     Properties:
@@ -170,6 +225,8 @@ Resources:
         BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
       NotificationsWithSubscribers:
         - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100 }
           Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
         - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100 }
           Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]

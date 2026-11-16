@@ -21,7 +21,8 @@ def _get_engine() -> SessionEngine:
         from handlers.ssm import settings_from_ssm
         from wiring import build_engine
 
-        settings = settings_from_ssm()
+        settings = settings_from_ssm(only=(
+            "LINE_CHANNEL_ACCESS_TOKEN_PARAM", "GEMINI_API_KEY_PARAM", "GOOGLE_PLACES_API_KEY_PARAM"))
         for problem in settings.problems():
             log.warning("config: %s", problem)
         _engine = build_engine(settings)

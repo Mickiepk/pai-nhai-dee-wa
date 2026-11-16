@@ -62,7 +62,7 @@ def handler(request: dict[str, Any], _ctx: Any) -> dict[str, Any]:
 
         from handlers.ssm import settings_from_ssm
 
-        _secret = settings_from_ssm().line_channel_secret
+        _secret = settings_from_ssm(only=("LINE_CHANNEL_SECRET_PARAM",)).line_channel_secret
         _sqs = boto3.client("sqs")
     headers = {k.lower(): v for k, v in (request.get("headers") or {}).items()}
     queue_url = os.environ["QUEUE_URL"]
