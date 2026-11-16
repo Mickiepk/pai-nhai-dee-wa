@@ -1,0 +1,66 @@
+# Session start, notice, silence, stickers/555/links.  Spec: docs/TEST_SPEC.md
+- id: SBX-01
+  area: เริ่ม session + ประกาศ PDPA
+  title: "@bot + ย่านที่รู้จัก -> notice 60 นาที + ปุ่มหยุดฟัง + 3 ร้านใน 3 กม."
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect:
+        n_messages: 3
+        contains: ["60 นาที", "ไม่เก็บข้อความ", "ได้ 3 ที่ละ ทุกที่ไม่เกิน 3 กม. จากอารีย์", "ข้อมูลร้านจาก Google Maps"]
+        buttons: ["หยุดฟัง", "แผนที่", "เอาร้านนี้"]
+        state: listening
+        area: อารีย์
+        kind: food
+        participants: [A]
+        suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"]
+        max_distance_km: 3
+        not_contains: ["บุฟเฟต์ไกลบางนา"]
+        llm_calls: 1
+        places_calls: 1
+
+- id: SBX-02
+  area: เริ่ม session + ประกาศ PDPA
+  title: ไม่มี session = ไม่อ่าน; @bot ที่ไม่มี intent ได้ help ไม่เปิด session; ไม่บอกย่าน -> ถามย่าน
+  steps:
+    - say: [A, "วันนี้เหนื่อยมาก อยากกินญี่ปุ่น"]
+      expect: {silent: true, state: none, llm_calls: 0}
+    - say: [A, "@bot สวัสดี"]
+      expect: {contains: ["กินไรดีแถวอารีย์"], state: none}
+    - say: [A, "@bot กินไรดีวะ"]
+      expect:
+        contains: ["60 นาที", "จะไปแถวไหนกันอะ?"]
+        buttons: ["หยุดฟัง", "สยาม", "อารีย์", "สาทร", "อโศก"]
+        state: listening
+        places_calls: 0
+    - tap: {user: B, act: "area:อารีย์"}
+      expect: {suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"], area: อารีย์}
+
+- id: SBX-03
+  area: เงียบตอนคุยเล่น
+  title: ระหว่าง session บอทเงียบกับแชตทั่วไป ข้อความทั่วไปยังถูกอ่าน (เรียก LLM)
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "เมื่อวานดูบอลมันส์มาก"]
+      expect: {silent: true}
+    - say: [C, "ใครไปด้วยบ้างวันนี้"]
+      expect: {silent: true, state: listening, llm_calls: 3, suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"]}
+
+- id: SBX-04
+  area: สติกเกอร์ / 555 / ลิงก์
+  title: สติกเกอร์ รูป 555 ok ลิงก์ล้วน อีโมจิล้วน = เงียบ และไม่เรียก LLM
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - sticker: B
+      expect: {silent: true}
+    - image: B
+      expect: {silent: true}
+    - say: [C, "55555"]
+      expect: {silent: true}
+    - say: [C, "ok"]
+      expect: {silent: true}
+    - say: [D, "https://maps.app.goo.gl/abcdef"]
+      expect: {silent: true}
+    - say: [D, "👍👍👍"]
+      expect: {silent: true}
+    - say: [C, "โอเค"]
+      expect: {silent: true, llm_calls: 1, state: listening, participants: [A, C, D]}

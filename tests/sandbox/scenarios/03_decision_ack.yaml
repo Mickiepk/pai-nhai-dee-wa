@@ -1,0 +1,152 @@
+# Asking the bot mid-session, decision detection, confirmation card, acks.
+- id: SBX-20
+  area: ถามบอทกลาง session
+  title: "\"@bot มีร้านเกาหลีไหม\" -> ค้นใหม่ด้วยเกาหลี + สิ่งที่สะสมไว้ ไม่เปิด session ใหม่"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "@bot มีร้านเกาหลีไหม"]
+      expect: {suggestions: ["ปิ้งย่างโซล"], area: อารีย์, n_messages: 2, places_calls: 2, participants: [A, B]}
+    - say: [C, "@bot ช่วยด้วย"]
+      expect: {contains: ["ฟังอยู่นะ"], state: listening}
+
+- id: SBX-21
+  area: ตรวจจับการตัดสินใจ
+  title: true positive "โอเค ไปร้านนี้แหละ" -> การ์ดยืนยันร้านที่ 1; "เอาร้านที่ 2" -> ร้านที่ 2
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "โอเค ไปร้านนี้แหละ"]
+      expect:
+        contains: ["สรุปว่าไปที่นี่นะ?", "ซูชิอารีย์", "รอทุกคนกดตกลง: เอ, บี"]
+        buttons: ["ตกลง ✅", "ยังก่อน"]
+        state: confirming
+        candidate: ซูชิอารีย์
+    - tap: {user: A, act: ack_no}
+      expect: {state: listening, candidate: null, acks: []}
+    - say: [A, "เอาร้านที่ 2"]
+      expect: {state: confirming, candidate: เวิลด์บุฟเฟต์}
+
+- id: SBX-22
+  area: ตรวจจับการตัดสินใจ
+  title: false positive ที่ต้องเงียบ "โอเค 555" / "ไปไหนดีวะ" / "ไม่เอาร้านนี้"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "โอเค 555"]
+      expect: {silent: true, state: listening}
+    - say: [C, "ไปไหนดีวะ"]
+      expect: {silent: true, state: listening}
+    - say: [C, "ไม่เอาร้านนี้"]
+      expect: {silent: true, state: listening}
+
+- id: SBX-23
+  area: ตรวจจับการตัดสินใจ
+  title: false positive ที่เป็นคำถาม "ตกลงไปไหนกันแน่" / "จบที่ไหนก็ได้" ต้องไม่ขึ้นการ์ดยืนยัน
+  bug: BUG-11
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ตกลงไปไหนกันแน่"]
+      expect: {silent: true, state: listening}
+    - say: [C, "จบที่ไหนก็ได้"]
+      expect: {silent: true, state: listening}
+
+- id: SBX-24
+  area: ตรวจจับการตัดสินใจ
+  title: "\"เอาร้านที่ 3\" ตอนมีแค่ 1 ร้าน -> ต้องไม่ยืนยันร้านที่ 1 แทนเงียบๆ"
+  bug: BUG-15
+  steps:
+    - say: [A, "@bot ไปไหนดีแถวอารีย์ โบว์ลิ่ง"]
+    - say: [B, "เอาร้านที่ 3"]
+      expect: {state: listening, not_contains: ["สรุปว่าไปที่นี่นะ?"]}
+
+- id: SBX-25
+  area: รายชื่อในการ์ดยืนยัน
+  title: การ์ดมีทุกคนที่พิมพ์ข้อความ (รวมคนพิมพ์ 555) ตามลำดับที่พูด แต่ไม่มีคนส่งแค่สติกเกอร์
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "เกาหลีก็ได้นะ"]
+    - sticker: C
+    - say: [D, "555"]
+    - say: [B, "ไปร้านที่ 3"]
+      expect:
+        contains: ["รอทุกคนกดตกลง: เอ, บี, ดี"]
+        not_contains: ["ซี"]
+        participants: [A, B, D]
+        candidate: ปิ้งย่างโซล
+
+- id: SBX-26
+  area: Ack ครบทุกคน
+  title: ทุกคนกด ✅ -> การ์ดแผน (ระยะเส้นตรง เวลา ลิงก์แผนที่) และจบ session
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "2 ทุ่มนะ"]
+      expect: {when: "20:00"}
+    - say: [B, "เอาร้านที่ 2"]
+    - tap: {user: A, act: ack_yes}
+      expect: {contains: ["✅ 1/2 คนตกลงแล้ว"], acks: [A], state: confirming}
+    - tap: {user: B, act: ack_yes}
+      expect:
+        contains: ["🎉 จบ! ได้ที่ไปละ", "เวิลด์บุฟเฟต์", "~510 ม. จากอารีย์ (ระยะเส้นตรง)", "เวลา: 20:00"]
+        buttons: ["เปิดแผนที่"]
+        state: none
+
+- id: SBX-27
+  area: ยังก่อน
+  title: ผู้ร่วมกด [ยังก่อน] -> กลับไปฟัง ล้าง acks; ตัดสินใจใหม่ได้
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - tap: {user: A, act: ack_yes}
+    - tap: {user: B, act: ack_no}
+      expect: {contains: ["ยังไม่สรุป"], state: listening, acks: [], candidate: null}
+    - say: [A, "เอาร้านที่ 3"]
+      expect: {state: confirming, candidate: ปิ้งย่างโซล, acks: []}
+
+- id: SBX-28
+  area: ยังก่อน
+  title: คนที่ไม่เคยพิมพ์ (E) กด [ยังก่อน] -> ยกเลิกได้ (ตาม ARCHITECTURE "anyone") และต้องถูกนับเป็นผู้ร่วมเหมือนกด ✅
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - tap: {user: E, act: ack_no}
+      expect: {state: listening, participants: [A, B, E]}
+
+- id: SBX-29
+  area: Ack โดยคนนอก
+  title: คนที่ไม่เคยพิมพ์ (E) กด ✅ -> ถูกเพิ่มเป็นผู้ร่วม นับ 1/3; ต้องรอ A,B ครบก่อนจบ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - tap: {user: E, act: ack_yes}
+      expect: {contains: ["✅ 1/3 คนตกลงแล้ว"], participants: [A, B, E], acks: [E], state: confirming}
+    - tap: {user: A, act: ack_yes}
+      expect: {state: confirming}
+    - tap: {user: B, act: ack_yes}
+      expect: {contains: ["🎉 จบ!"], state: none}
+
+- id: SBX-30
+  area: Postback ซ้ำ
+  title: กด ✅ ซ้ำ (คนละ event) ไม่นับซ้ำ; event ซ้ำ (id เดิม) เงียบ; กดหลังจบ -> "หมดเวลา"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - tap: {user: A, act: ack_yes}
+      expect: {acks: [A]}
+    - tap: {user: A, act: ack_yes}
+      expect: {contains: ["✅ 1/2 คนตกลงแล้ว"], acks: [A]}
+    - dup: true
+      expect: {silent: true, acks: [A]}
+    - tap: {user: B, act: ack_yes}
+      expect: {contains: ["🎉 จบ!"], state: none}
+    - tap: {user: B, act: ack_yes, sid: stale}
+      expect: {contains: ["อันนี้หมดเวลาแล้ว"], state: none}
+
+- id: SBX-31
+  area: รายชื่อในการ์ดยืนยัน
+  title: คนใหม่พิมพ์ระหว่างรอ ack (D) -> ถูกเพิ่มเป็นผู้ร่วม ต้องกดด้วย (พฤติกรรมตาม doc แต่การ์ดไม่อัปเดต ดู Q-03)
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - say: [D, "ไปด้วยๆ"]
+      expect: {silent: true, participants: [A, B, D]}
+    - tap: {user: A, act: ack_yes}
+    - tap: {user: B, act: ack_yes}
+      expect: {contains: ["✅ 2/3 คนตกลงแล้ว"], state: confirming}

@@ -1,0 +1,86 @@
+# Stop, timeout, new session, announce, vote.
+- id: SBX-32
+  area: หยุดฟัง
+  title: ปุ่ม [หยุดฟัง] -> จบทันที ข้อความหลังจากนั้นไม่ถูกอ่าน
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - tap: {user: B, act: stop}
+      expect: {contains: ["หยุดฟังละ"], state: none}
+    - say: [B, "ไปกินชาบูกัน"]
+      expect: {silent: true, state: none, llm_calls: 1}
+
+- id: SBX-33
+  area: หยุดฟัง
+  title: "\"@bot พอแล้ว\" / \"@bot หยุด\" -> จบ session"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "@bot พอแล้ว"]
+      expect: {contains: ["หยุดฟังละ"], state: none}
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [A, "@bot หยุดก่อน"]
+      expect: {contains: ["หยุดฟังละ"], state: none}
+
+- id: SBX-34
+  area: หมดเวลา 60 นาที
+  title: นาทีที่ 59:59 ยังฟัง; ครบ 60:00 จบ เงียบ ไม่อ่าน ปุ่มเก่าได้ "หมดเวลา"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - advance: 3599
+      say: [B, "อยากกินเกาหลี"]
+      expect: {silent: true, state: listening, prefs: {B: {likes: ["เกาหลี"]}}}
+    - advance: 1
+      say: [B, "อยากกินชาบู"]
+      expect: {silent: true, state: none, llm_calls: 2}
+    - tap: {user: A, act: "pick:1", sid: stale}
+      expect: {contains: ["อันนี้หมดเวลาแล้ว"], state: none}
+
+- id: SBX-35
+  area: session ใหม่หลังจบ
+  title: จบด้วยแผนแล้วเรียกใหม่ -> session ใหม่ sid ใหม่ ความชอบเก่าไม่ติดมา ปุ่มเก่าใช้ไม่ได้
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "อยากกินญี่ปุ่น"]
+    - say: [B, "ไปร้านนี้แหละ"]
+    - tap: {user: A, act: ack_yes}
+    - tap: {user: B, act: ack_yes}
+      expect: {state: none}
+    - say: [C, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["60 นาที"], state: listening, participants: [C], acks: [], candidate: null}
+    - tap: {user: A, act: ack_yes, sid: stale}
+      expect: {contains: ["อันนี้หมดเวลาแล้ว"], state: listening, acks: []}
+    - say: [C, "@bot ประกาศหน่อย"]
+      expect: {not_contains: ["ญี่ปุ่น", "บี"]}
+
+- id: SBX-36
+  area: ประกาศเมื่อขอ
+  title: "\"@bot ประกาศหน่อย\" -> สรุปย่าน ความชอบรายคน เวลา + ปุ่มหาร้าน; ไม่ประกาศเองถ้าไม่ขอ"
+  bug: BUG-19
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "เกาหลีดีกว่า"]
+      expect: {silent: true}
+    - say: [C, "หมูกระทะป่ะ 2 ทุ่ม"]
+      expect: {silent: true}
+    - say: [A, "@bot ประกาศหน่อย"]
+      expect:
+        contains: ["📣 สรุปตอนนี้", "ย่าน: อารีย์", "บี: ชอบ เกาหลี", "ซี: ชอบ หมูกระทะ", "20:00"]
+        buttons: ["หาร้านให้หน่อย"]
+
+- id: SBX-37
+  area: ประกาศเมื่อขอ
+  title: ประกาศแล้วกด [หาร้านให้หน่อย] -> ค้นด้วยความชอบล่าสุด
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "เกาหลีดีกว่า"]
+    - say: [A, "@bot ประกาศหน่อย"]
+      expect: {contains: ["ย่าน: อารีย์", "บี: ชอบ เกาหลี"]}
+    - tap: {user: A, act: search}
+      expect: {suggestions: ["ปิ้งย่างโซล"]}
+
+- id: SBX-38
+  area: โหวตเมื่อขอ
+  title: "\"@bot โหวตหน่อย\" -> แนะนำโพล LINE / ปุ่มเอาร้านนี้ ไม่เปลี่ยน state"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "@bot โหวตหน่อย"]
+      expect: {contains: ["โพล", "เอาร้านนี้"], state: listening, n_messages: 1}

@@ -1,0 +1,102 @@
+# Duplicate webhooks, crash + retry, concurrent groups, LLM failure containment.
+- id: SBX-46
+  area: Webhook ซ้ำ
+  title: event เดิม (webhookEventId เดิม) ส่งซ้ำ -> ทำครั้งเดียว ไม่ตอบซ้ำ ไม่เรียก LLM/Places ซ้ำ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - dup: true
+      expect: {silent: true, llm_calls: 1, places_calls: 1}
+    - say: [B, "อยากกินเกาหลี"]
+    - dup: true
+      expect: {silent: true, llm_calls: 2}
+
+- id: SBX-47
+  area: Crash แล้ว retry
+  title: reply พังตอนเปิด session -> retry (event เดิม) ได้คำตอบครบ ไม่ถูก dedup ทิ้ง
+  steps:
+    - fail_next_reply: true
+      say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {crash: true, state: none}
+    - retry: true
+      expect: {crash: false, contains: ["60 นาที", "ได้ 3 ที่ละ"], state: listening}
+
+- id: SBX-48
+  area: Crash แล้ว retry
+  title: reply พังตอนส่งการ์ดยืนยัน -> state ไม่ค้างที่ confirming; retry ได้การ์ด
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - fail_next_reply: true
+      say: [B, "ไปร้านนี้แหละ"]
+      expect: {crash: true, state: listening}
+    - retry: true
+      expect: {contains: ["สรุปว่าไปที่นี่นะ?"], state: confirming}
+
+- id: SBX-49
+  area: สองกลุ่มพร้อมกัน
+  title: G1/G2 สลับกันส่ง (user A อยู่ทั้งสองกลุ่ม) -> state แยกกัน ปุ่มของ G1 ใช้ใน G2 ไม่ได้
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - group: G2
+      say: [A, "@bot ไปไหนดีแถวอารีย์ โบว์ลิ่ง"]
+      expect: {kind: activity, suggestions: ["โบว์ลิ่งอารีย์"]}
+    - say: [A, "อยากกินเกาหลี"]
+    - group: G2
+      say: [A, "ไม่เอาเกาหลี"]
+    - expect: {prefs: {A: {likes: ["เกาหลี"], dislikes: []}}, kind: food}
+    - group: G2
+      expect: {prefs: {A: {likes: ["โบว์ลิ่ง"], dislikes: ["เกาหลี"]}}}
+    - say: [B, "ไปร้านนี้แหละ"]
+      expect: {state: confirming}
+    - group: G2
+      expect: {state: listening}
+    - group: G2
+      tap: {user: A, act: ack_yes}
+      expect: {silent: true, state: listening}
+
+- id: SBX-50
+  area: ควบคุม LLM ไม่ deterministic
+  title: LLM ตอบ JSON เสีย / ผิด schema / timeout -> ใช้กฎแทน คำตอบยังออก และเหมือนเดิมทุกรอบ
+  llm: scripted
+  script:
+    "กินไรดีแถวอารีย์": "{not json"
+    "อยากกินเกาหลี": {intent: food, pick_index: 7}
+    "มีร้านเกาหลีไหม": TIMEOUT
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 3 ที่ละ"], area: อารีย์}
+    - say: [B, "อยากกินเกาหลี"]
+      expect: {silent: true, prefs: {B: {likes: ["เกาหลี"]}}}
+    - say: [B, "@bot มีร้านเกาหลีไหม"]
+      expect: {suggestions: ["ปิ้งย่างโซล"], llm_calls: 3}
+
+- id: SBX-51
+  area: ควบคุม LLM ไม่ deterministic
+  title: การตัดสินใจทำในโค้ด - LLM บอก decision ตอนยังไม่มีร้าน หรือระหว่าง confirming -> ไม่มีการ์ดเพิ่ม
+  llm: scripted
+  script:
+    "กินไรดีวะ": {intent: food, request: search, asks_bot: true, needs_answer: true}
+    "ไปร้านนี้แหละ": {decision_detected: true}
+    "กินไรดีแถวอารีย์": {intent: food, request: search, area: "อารีย์", asks_bot: true, needs_answer: true}
+    "เอาร้านนี้": {decision_detected: true, pick_index: 2}
+  steps:
+    - say: [A, "@bot กินไรดีวะ"]
+      expect: {contains: ["จะไปแถวไหนกันอะ?"]}
+    - say: [B, "ไปร้านนี้แหละ"]
+      expect: {silent: true, state: listening}
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 3 ที่ละ"]}
+    - say: [B, "เอาร้านนี้"]
+      expect: {state: confirming, candidate: เวิลด์บุฟเฟต์}
+    - say: [C, "ไปร้านนี้แหละ"]
+      expect: {silent: true, state: confirming, candidate: เวิลด์บุฟเฟต์}
+
+- id: SBX-52
+  area: ควบคุม LLM ไม่ deterministic
+  title: ร้านคะแนน/ระยะเท่ากัน -> ลำดับต้องคงที่แม้ Places ส่งผลมาคนละลำดับ (tie-break)
+  places:
+    - {id: tie-b, name: "[ตัวอย่าง] ร้านบี", lat: 13.7800, lng: 100.5450, tags: ["ไทย"], rating: 4.5}
+    - {id: tie-a, name: "[ตัวอย่าง] ร้านเอ", lat: 13.7800, lng: 100.5450, tags: ["ไทย"], rating: 4.5}
+  determinism_bug: BUG-17
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 2 ที่ละ"]}

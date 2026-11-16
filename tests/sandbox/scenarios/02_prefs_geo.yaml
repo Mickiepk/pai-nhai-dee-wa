@@ -1,0 +1,166 @@
+# Preferences, change of mind, radius, anchors, unknown area, fewer than 3 places.
+- id: SBX-05
+  area: สะสมความชอบหลายคน
+  title: A ชอบญี่ปุ่น, B เพิ่งกินญี่ปุ่น, C ไม่เอาบุฟเฟต์ -> ค้นแล้วข้ามญี่ปุ่น/บุฟเฟต์
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [A, "อยากกินญี่ปุ่น"]
+      expect: {silent: true}
+    - say: [B, "เพิ่งกินญี่ปุ่นมา"]
+      expect: {silent: true}
+    - say: [C, "ไม่เอาบุฟเฟต์ งบ 400"]
+      expect:
+        silent: true
+        prefs:
+          A: {likes: ["ญี่ปุ่น"]}
+          B: {just_ate: ["ญี่ปุ่น"]}
+          C: {dislikes: ["บุฟเฟต์"], budget_max_thb: 400}
+    - say: [A, "@bot มีไรแนะนำ"]
+      expect:
+        suggestions: ["ปิ้งย่างโซล", "ข้าวมันไก่"]
+        contains: ["ได้ 2 ที่ละ", "ข้ามญี่ปุ่น/บุฟเฟต์ให้ละ"]
+        not_contains: ["ซูชิ", "ราเมน", "เวิลด์บุฟเฟต์"]
+
+- id: SBX-06
+  area: งบประมาณ
+  title: "\"งบ 400\" ต้องตัดร้านแพง (price_level 4) ออก"
+  bug: BUG-12
+  places:
+    - {id: p-cheap, name: "[ตัวอย่าง] ข้าวแกงถูกใจ", lat: 13.7800, lng: 100.5440, tags: ["ไทย", "restaurant"], rating: 4.0, price_level: 1}
+    - {id: p-lux, name: "[ตัวอย่าง] โอมากาเสะหรู", lat: 13.7799, lng: 100.5447, tags: ["ญี่ปุ่น", "restaurant"], rating: 4.9, price_level: 4}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์ งบ 400"]
+      expect:
+        suggestions: ["ข้าวแกงถูกใจ"]
+        not_contains: ["โอมากาเสะหรู"]
+
+- id: SBX-07
+  area: เปลี่ยนใจ
+  title: คนเดิมเปลี่ยนจากญี่ปุ่นเป็นเกาหลี -> ล่าสุดชนะ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [A, "อยากกินญี่ปุ่น"]
+    - say: [A, "ไม่เอาญี่ปุ่นแล้ว เกาหลีดีกว่า"]
+      expect: {silent: true, prefs: {A: {likes: ["เกาหลี"], dislikes: ["ญี่ปุ่น"]}}}
+    - say: [A, "@bot มีไรแนะนำ"]
+      expect: {suggestions: ["ปิ้งย่างโซล"], not_contains: ["ซูชิ", "ราเมน"]}
+
+- id: SBX-08
+  area: เปลี่ยนใจ
+  title: สองคนขัดกัน (A ไม่เอาญี่ปุ่น แล้ว B อยากกินญี่ปุ่น) -> ความต้องการล่าสุดของกลุ่มชนะ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [A, "ไม่เอาญี่ปุ่น"]
+    - say: [B, "อยากกินญี่ปุ่นมาก"]
+    - say: [C, "@bot มีไรแนะนำ"]
+      expect: {suggestions: ["ซูชิอารีย์", "ราเมนคุมะ"]}
+
+- id: SBX-09
+  area: "\"ไกลไป\" / \"ไม่เกิน X กม.\""
+  title: "\"@bot ไกลไป\" -> ค้นใหม่ด้วยรัศมีที่แคบลง"
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "@bot ไกลไป"]
+      expect:
+        contains: ["ที่ละ"]
+        not_contains: ["ฟังอยู่นะ", "ไม่เกิน 3 กม."]
+
+- id: SBX-10
+  area: "\"ไกลไป\" / \"ไม่เกิน X กม.\""
+  title: "\"ไม่เกิน 400 ม.\" -> ทุกร้าน <= 0.4 กม. และหัวข้อบอกรัศมีใหม่"
+  bug: BUG-13
+  steps:
+    - say: [A, "@bot หาร้านแถวอารีย์ ไม่เกิน 400 ม."]
+      expect:
+        contains: ["400"]
+        max_distance_km: 0.4
+        not_contains: ["เวิลด์บุฟเฟต์"]
+
+- id: SBX-11
+  area: จุดอ้างอิง (สถานี/แลนด์มาร์ก/หลายย่าน/ระหว่าง)
+  title: สถานี "BTS อารีย์" -> ใช้พิกัดอารีย์ ไม่เรียก geocode
+  steps:
+    - say: [A, "@bot กินไรดีแถว BTS อารีย์"]
+      expect: {area: อารีย์, suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"], places_calls: 1}
+
+- id: SBX-12
+  area: จุดอ้างอิง (สถานี/แลนด์มาร์ก/หลายย่าน/ระหว่าง)
+  title: แลนด์มาร์ก (LLM สคริปต์บอก area=ตึกพหลฯ) -> geocode แล้ววัดระยะจากจุดนั้น
+  llm: scripted
+  geocode: {"ตึกพหลฯ": [13.7805, 100.5450]}
+  script:
+    "กินไรดีแถวตึกพหลฯ": {intent: food, request: search, area: "ตึกพหลฯ", asks_bot: true, needs_answer: true}
+  steps:
+    - say: [A, "@bot กินไรดีแถวตึกพหลฯ"]
+      expect: {area: "ตึกพหลฯ", contains: ["ทุกที่ไม่เกิน 3 กม. จากตึกพหลฯ"], suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"], max_distance_km: 3, state: listening}
+
+- id: SBX-13
+  area: จุดอ้างอิง (สถานี/แลนด์มาร์ก/หลายย่าน/ระหว่าง)
+  title: แลนด์มาร์กใกล้อารีย์ -> ได้ร้านและระยะจากแลนด์มาร์ก; geocode ต้องถูกนับใน QUOTA#PLACES
+  llm: scripted
+  geocode: {"ตึกพหลฯ": [13.7805, 100.5450]}
+  script:
+    "กินไรดีแถวตึกพหลฯ": {intent: food, request: search, area: "ตึกพหลฯ", asks_bot: true, needs_answer: true}
+  steps:
+    - say: [A, "@bot กินไรดีแถวตึกพหลฯ"]
+      expect: {places_quota_matches_calls: true}
+
+- id: SBX-14
+  area: จุดอ้างอิง (สถานี/แลนด์มาร์ก/หลายย่าน/ระหว่าง)
+  title: หลายย่าน "อโศกหรือสยามก็ได้" -> ใช้ย่านที่พูดก่อน (อโศก) ไม่ใช่ลำดับในโค้ด
+  bug: BUG-18
+  steps:
+    - say: [A, "@bot กินไรดี แถวอโศกหรือสยามก็ได้"]
+      expect: {area: อโศก}
+
+- id: SBX-15
+  area: จุดอ้างอิง (สถานี/แลนด์มาร์ก/หลายย่าน/ระหว่าง)
+  title: "\"ตรงกลางระหว่างสยามกับอารีย์\" -> บอทต้องไม่เลือกย่านเดียวเงียบๆ (ต้องพูดถึงทั้งสองย่าน)"
+  bug: BUG-14
+  steps:
+    - say: [A, "@bot กินไรดี ตรงกลางระหว่างสยามกับอารีย์"]
+      expect: {contains: ["สยาม", "อารีย์"], not_contains: ["จากอารีย์\n"]}
+
+- id: SBX-16
+  area: ย่านที่ไม่รู้จัก
+  title: ย่านที่กฎรู้จักแต่ไม่มีพิกัด (บางนา) -> "หาพิกัดไม่เจอ" + ปุ่มย่าน แล้วกดเลือกย่านได้
+  steps:
+    - say: [A, "@bot กินไรดีแถวบางนา"]
+      expect:
+        contains: ["หาพิกัดบางนาไม่เจอ"]
+        buttons: ["สยาม", "อารีย์", "สาทร", "อโศก"]
+        not_contains: ["ได้ 0 ที่ละ"]
+        state: listening
+    - tap: {user: A, act: "area:อารีย์"}
+      expect: {area: อารีย์, suggestions: ["ซูชิอารีย์", "เวิลด์บุฟเฟต์", "ปิ้งย่างโซล"]}
+
+- id: SBX-17
+  area: ย่านที่ไม่รู้จัก
+  title: ย่านที่ไม่อยู่ในรายการเลย (บางแสน) ทางกฎ -> ถามย่าน (ไม่แต่งพิกัดเอง)
+  steps:
+    - say: [A, "@bot กินไรดีแถวบางแสน"]
+      expect: {contains: ["จะไปแถวไหนกันอะ?"], buttons: ["อารีย์"], places_calls: 0, state: listening}
+
+- id: SBX-18
+  area: ร้านน้อยกว่า 3
+  title: ได้ 1 ร้าน -> หัวข้อ "ได้ 1 ที่" การ์ดเดียว; ไม่เจอเลย -> ข้อความ "ไม่เจอ" ไม่มีการ์ดว่าง
+  steps:
+    - say: [A, "@bot ไปไหนดีแถวอารีย์ โบว์ลิ่ง"]
+      expect: {contains: ["ได้ 1 ที่ละ ทุกที่ไม่เกิน 5 กม. จากอารีย์"], suggestions: ["โบว์ลิ่งอารีย์"], kind: activity}
+
+- id: SBX-19
+  area: ร้านน้อยกว่า 3
+  title: Places คืน 0 ร้าน -> "ไม่เจอที่ตรงเงื่อนไข" ไม่มีการ์ดว่าง
+  places: none
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ใน 3 กม. จากอารีย์ ไม่เจอที่ตรงเงื่อนไขเลย"], n_messages: 2, state: listening}
+
+- id: SBX-59
+  area: "\"ไกลไป\" / \"ไม่เกิน X กม.\""
+  title: "\"ไม่เกิน 1 กม.\" แล้ว \"ไกลไป\" -> รัศมี 1 กม. (ขั้นต่ำ) ทุกร้านอยู่ในรัศมี"
+  steps:
+    - say: [A, "@bot หาร้านแถวอารีย์ ไม่เกิน 1 กม."]
+      expect: {contains: ["ทุกที่ไม่เกิน 1 กม. จากอารีย์"], max_distance_km: 1}
+    - say: [B, "@bot ไกลไป"]
+      expect: {contains: ["ทุกที่ไม่เกิน 1 กม. จากอารีย์"], max_distance_km: 1}

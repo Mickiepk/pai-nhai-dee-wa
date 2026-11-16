@@ -1,0 +1,55 @@
+# Thai slang and typos on the rules path (Gemini down / over cap), activity flow.
+- id: SBX-53
+  area: สแลงไทย (กฎ)
+  title: สแลง "หิวแล้วอ่ะ แถวอารีย์ ชาบูป่ะ" / "เบื่อส้มตำละ" -> เข้าใจ
+  steps:
+    - say: [A, "@bot หิวแล้วอ่ะ แถวอารีย์ ชาบูป่ะ"]
+      expect: {area: อารีย์, kind: food, prefs: {A: {likes: ["ชาบู"]}}}
+    - say: [B, "เบื่อส้มตำละ"]
+      expect: {silent: true, prefs: {B: {dislikes: ["ส้มตำ"]}}}
+    - say: [C, "พึ่งกินหมูกระทะมาเมื่อวาน"]
+      expect: {silent: true, prefs: {C: {just_ate: ["หมูกระทะ"]}}}
+
+- id: SBX-54
+  area: พิมพ์ผิด (กฎ)
+  title: พิมพ์ผิดที่คนพิมพ์บ่อย "อารีย" (ไม่มีการันต์) / "หมูกะทะ" -> ควรเข้าใจ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย"]
+      expect: {area: อารีย์}
+    - say: [B, "หมูกะทะป่ะ"]
+      expect: {prefs: {B: {likes: ["หมูกระทะ"]}}}
+
+- id: SBX-55
+  area: พิมพ์ผิด (กฎ)
+  title: ไทยปนอังกฤษ "sushi near Ari" -> ควรเข้าใจย่าน+อาหาร
+  steps:
+    - say: [A, "@bot sushi near Ari"]
+      expect: {state: listening, area: อารีย์, prefs: {A: {likes: ["ซูชิ"]}}}
+
+- id: SBX-56
+  area: Activity
+  title: กิจกรรมครบวงจร - โบว์ลิ่ง รัศมี 5 กม. -> เลือก -> ack -> แผน
+  steps:
+    - say: [A, "@bot ไปไหนดีแถวอารีย์ เล่นโบว์ลิ่ง"]
+      expect: {kind: activity, suggestions: ["โบว์ลิ่งอารีย์"], contains: ["ไม่เกิน 5 กม."]}
+    - tap: {user: B, act: "pick:1"}
+      expect: {state: confirming, candidate: โบว์ลิ่งอารีย์, participants: [A, B], contains: ["รอทุกคนกดตกลง: เอ, บี"]}
+    - tap: {user: A, act: ack_yes}
+    - tap: {user: B, act: ack_yes}
+      expect: {contains: ["🎉 จบ!", "โบว์ลิ่งอารีย์"], state: none}
+
+- id: SBX-57
+  area: Activity
+  title: ข้อความเปิด session ของกิจกรรมไม่ควรพูดว่า "อยากกินอะไร"
+  steps:
+    - say: [A, "@bot ไปไหนดีแถวอารีย์ เล่นโบว์ลิ่ง"]
+      expect: {not_contains: ["อยากกินอะไร"]}
+
+- id: SBX-58
+  area: Activity
+  title: เปลี่ยนจากกินเป็นกิจกรรมกลาง session "@bot ไปคาราโอเกะกันดีกว่า" -> ได้คาราโอเกะ รัศมีกิจกรรม
+  bug: BUG-16
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "@bot ไปคาราโอเกะกันดีกว่า"]
+      expect: {suggestions: ["คาราโอเกะพหลฯ"], kind: activity, contains: ["ไม่เกิน 5 กม."]}

@@ -1,0 +1,92 @@
+# Cost caps, kill switch, paid-tier flag, privacy (PDPA).
+- id: SBX-39
+  area: เพดาน LLM ต่อ session
+  title: MAX_LLM_CALLS_PER_SESSION=2 -> ครั้งที่ 3 ใช้กฎฟรี ยังจำความชอบได้
+  settings: {max_llm_calls_per_session: 2}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {llm_calls: 1, llm_calls_session: 1}
+    - say: [B, "อยากกินเกาหลี"]
+      expect: {llm_calls: 2, llm_calls_session: 2}
+    - say: [C, "ไม่เอาบุฟเฟต์"]
+      expect: {silent: true, llm_calls: 2, llm_calls_session: 2, prefs: {C: {dislikes: ["บุฟเฟต์"]}}}
+
+- id: SBX-40
+  area: เพดานค้นต่อกลุ่มต่อวัน
+  title: MAX_SEARCHES_PER_GROUP_PER_DAY=2 -> ครั้งที่ 3 ได้ข้อความเพดาน ไม่เรียก Places; วันใหม่ (เวลาไทย) รีเซ็ต
+  settings: {max_searches_per_group_per_day: 2}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [A, "@bot มีร้านเกาหลีไหม"]
+      expect: {places_calls: 2}
+    - say: [A, "@bot มีร้านญี่ปุ่นไหม"]
+      expect: {contains: ["วันนี้กลุ่มนี้ค้นครบ 2 ครั้งแล้ว"], places_calls: 2}
+    - advance: 86400
+      say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 3 ที่ละ"], places_calls: 3}
+
+- id: SBX-41
+  area: เพดาน Places รวมทุกกลุ่ม
+  title: MAX_PLACES_CALLS_PER_DAY=1 -> กลุ่มที่ 2 ได้ "เต็มโควตา" ไม่เรียก Places
+  settings: {max_places_calls_per_day: 1}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {places_calls: 1}
+    - group: G2
+      say: [D, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["60 นาที", "เต็มโควตา"], places_calls: 1, state: listening}
+
+- id: SBX-42
+  area: Kill switch
+  title: BOT_ENABLED=false -> เงียบทุก event ไม่เรียก LLM/Places; ปิดกลาง session ปุ่มก็เงียบ
+  settings: {bot_enabled: false}
+  steps:
+    - join: true
+      expect: {silent: true}
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {silent: true, state: none, llm_calls: 0, places_calls: 0}
+    - settings: {bot_enabled: true}
+      say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {state: listening}
+    - settings: {bot_enabled: false}
+      tap: {user: A, act: stop}
+      expect: {silent: true, state: listening}
+
+- id: SBX-43
+  area: Paid tier ปิด
+  title: llm=gemini + GEMINI_PAID_TIER_CONFIRMED=false -> ไม่ส่งแชตที่ไม่ได้แท็กเข้า LLM แต่ @ ยังทำงาน; temperature=0
+  llm: scripted
+  settings: {llm_provider: gemini, gemini_paid_tier_confirmed: false}
+  script:
+    "กินไรดีแถวอารีย์": {intent: food, request: search, area: "อารีย์", asks_bot: true, needs_answer: true}
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+      expect: {contains: ["ได้ 3 ที่ละ"], llm_calls: 1, temperature_zero: true}
+    - say: [B, "อยากกินญี่ปุ่น"]
+      expect: {silent: true, llm_calls: 1, participants: [A, B]}
+    - say: [B, "ไปร้านนี้แหละ"]
+      expect: {silent: true, llm_calls: 1, state: listening}
+
+- id: SBX-44
+  area: ไม่เก็บข้อความดิบ
+  title: หลังคุยครบวงจร store มีแต่ข้อมูลที่สกัดแล้ว ไม่มีข้อความแชตเต็มๆ
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์ คืนนี้หิวมากเลย"]
+    - say: [B, "เพิ่งกินญี่ปุ่นมาเมื่อวานกับแฟน"]
+    - say: [C, "บ้านฉันอยู่ซอยอารีย์ 4 นะ เบอร์ 0812345678"]
+    - say: [B, "@bot มีร้านเกาหลีไหม"]
+    - say: [A, "โอเค ไปร้านนี้แหละ"]
+      expect: {no_raw_text: true, state: confirming}
+
+- id: SBX-45
+  area: ออกจากกลุ่ม = ลบข้อมูล
+  title: leave event ลบ session (ผู้ร่วม/ความชอบ) ทันที; เชิญกลับได้ greeting ใหม่
+  steps:
+    - say: [A, "@bot กินไรดีแถวอารีย์"]
+    - say: [B, "อยากกินญี่ปุ่น"]
+    - leave: true
+      expect: {silent: true, state: none, group_data_deleted: true}
+    - join: true
+      expect: {contains: ["ไม่เก็บข้อความ"], state: none}
+    - say: [B, "อยากกินเกาหลี"]
+      expect: {silent: true, state: none}
