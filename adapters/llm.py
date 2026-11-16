@@ -22,7 +22,11 @@ log = logging.getLogger(__name__)
 
 
 class Extractor(Protocol):
-    async def extract(self, text: str, *, mentioned: bool, context: dict[str, Any]) -> MessageDelta: ...
+    """Turns ONE chat message into a MessageDelta. Implementations: RuleExtractor (offline) and GeminiExtractor."""
+
+    async def extract(self, text: str, *, mentioned: bool, context: dict[str, Any]) -> MessageDelta:
+        """Extract intent/preferences from text; context carries area, recent wants and suggestion names."""
+        ...
 
 
 # ---------------------------------------------------------------- offline rules
@@ -84,9 +88,11 @@ class RuleExtractor:
     """Deterministic, offline. Good enough for the demo scenario and as a fallback."""
 
     async def extract(self, text: str, *, mentioned: bool, context: dict[str, Any]) -> MessageDelta:
+        """Async wrapper around extract_sync (same result)."""
         return self.extract_sync(text, mentioned=mentioned)
 
     def extract_sync(self, text: str, *, mentioned: bool) -> MessageDelta:
+        """Rule-based extraction: normalise slang/typos, then match intent, area, prefs, radius, decision, requests."""
         t = normalize(text.strip())  # table-driven slang/typo/English -> canonical Thai
         d = MessageDelta(asks_bot=mentioned)
 
@@ -178,6 +184,11 @@ Return ONLY JSON for the schema. Copy short Thai keywords; never copy the full m
 
 
 class GeminiExtractor:
+    """Gemini JSON-mode extractor (temperature 0, schema-validated).
+
+    Any failure or timeout falls back to RuleExtractor.
+    """
+
     def __init__(self, api_key: str, model: str, fallback: RuleExtractor, timeout_s: float = 4.0):
         from google import genai  # lazy: keeps tests and cold starts light
 
@@ -187,6 +198,7 @@ class GeminiExtractor:
         self._timeout_s = timeout_s
 
     async def extract(self, text: str, *, mentioned: bool, context: dict[str, Any]) -> MessageDelta:
+        """Call Gemini with a timeout; invalid JSON, schema errors and exceptions use the rule fallback."""
         from google.genai import types
 
         prompt = f"mentioned={str(mentioned).lower()}\ncontext={context}\nmessage:\n{text}"

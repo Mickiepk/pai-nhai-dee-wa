@@ -18,12 +18,15 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SearchOutcome:
+    """Result of a search: up to 3 suggestions and the radius used, or an error code."""
+
     suggestions: list[Suggestion]
     radius_km: float
     error: str | None = None  # "no_area" | "not_found" | "places_failed" | "cap"
 
 
 def build_query(session: Session) -> str:
+    """Text query: the latest group want (or the food/activity base query) plus the area label."""
     base = activity.BASE_QUERY if session.kind == "activity" else food.BASE_QUERY
     want = session.group_wants[-1] if session.group_wants else ""
     return " ".join(x for x in (want or base, session.area_label or "") if x)
@@ -37,6 +40,7 @@ Spend = Callable[[], bool]  # reserve one Places call against the daily cap; Fal
 
 
 async def resolve_center(session: Session, places: Places, spend: Spend | None = None) -> LatLng | None:
+    """Search centre: cached centre, else the area (or midpoint of two areas); geocodes only unknown names."""
     if session.area_center:
         return session.area_center
     if not session.area:
@@ -68,6 +72,7 @@ def _avoided(place: PlaceCandidate, avoid: set[str]) -> bool:
 
 def rank(cands: list[PlaceCandidate], center: LatLng, radius_km: float,
          avoid: set[str], exclude_ids: set[str], budget_thb: int | None = None) -> list[PlaceCandidate]:
+    """Filter by radius, exclusions, avoided terms and budget; sort by rating, distance, place_id; keep the top 3."""
     kept: list[PlaceCandidate] = []
     max_level = max_price_level(budget_thb) if budget_thb else None
     for c in cands:
@@ -84,6 +89,7 @@ def rank(cands: list[PlaceCandidate], center: LatLng, radius_km: float,
 
 async def search(session: Session, places: Places, *, exclude_last: bool = False,
                  spend: Spend | None = None) -> SearchOutcome:
+    """Resolve the centre, query Places (each call spends the daily cap), rank; Places errors never raise."""
     radius = current_radius(session)
     try:
         center = await resolve_center(session, places, spend)

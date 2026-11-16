@@ -22,5 +22,7 @@ def worth_reading(message_type: str, text: str | None) -> bool:
     compact = re.sub(r"[\s!?.,~]+", "", stripped).lower()
     if len(compact) < 3 or compact in _FILLER or _LAUGH.match(compact):
         return False
-    # emoji / punctuation only
-    return any(ch.isalnum() for ch in compact)
+    letters = "".join(ch for ch in compact if ch.isalnum())  # "5555555 🤣" is still just laughing
+    if not letters or letters in _FILLER or _LAUGH.match(letters):
+        return False
+    return True  # something other than emoji / punctuation / laughter is left

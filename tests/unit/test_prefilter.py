@@ -4,7 +4,8 @@ from session.prefilter import worth_reading
 
 
 @pytest.mark.parametrize("text", ["555", "55555+", "ok", "OK!", "โอเค", "ฮ่าๆ", "จ้า", "ab",
-                                  "https://tiktok.com/x", "  ", "😂😂😂", "หหหห"])
+                                  "https://tiktok.com/x", "  ", "😂😂😂", "หหหห",
+                                  "5555555555 🤣", "555 😂😂", "😘😘😘 !!!", "ok 👍"])
 def test_drops_noise(text):
     assert not worth_reading("text", text)
 

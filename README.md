@@ -227,7 +227,7 @@ SAM parameters (`template.yaml`): `Stage`, `AlertEmail` (บังคับ), `M
 
 กลยุทธ์ครบ (pyramid, coverage, flaky policy, definition of done, release gate): [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) ·
 นโยบายความหมายของ "deterministic" และระดับความรุนแรง P0-P3: [docs/TEST_POLICY.md](docs/TEST_POLICY.md) ·
-คอร์สเทสทีละ Level: [docs/TESTING.md](docs/TESTING.md) · ตาราง 59+ เคส: [docs/TEST_SPEC.md](docs/TEST_SPEC.md) · อธิบายโค้ดเทสต์: [tests/README.md](tests/README.md)
+คอร์สเทสทีละ Level: [docs/TESTING.md](docs/TESTING.md) · ตาราง 72 เคส: [docs/TEST_SPEC.md](docs/TEST_SPEC.md) · อธิบายโค้ดเทสต์: [tests/README.md](tests/README.md)
 
 ## CI/CD overview
 

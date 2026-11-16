@@ -12,10 +12,12 @@ MIN_EXPLICIT_RADIUS_KM = 0.1  # "ไม่เกิน 400 ม." must be honoure
 
 
 def clamp_radius(km: float) -> float:
+    """Keep a search radius within the allowed range."""
     return min(MAX_RADIUS_KM, max(MIN_EXPLICIT_RADIUS_KM, km))
 
 
 def current_radius(session: Session) -> float:
+    """Radius in km currently in force for the session (explicit request, halved, or default)."""
     if session.radius_km:
         return session.radius_km
     return activity.RADIUS_KM if session.kind == "activity" else food.RADIUS_KM
@@ -80,6 +82,7 @@ def avoid_terms(session: Session) -> set[str]:
 
 
 def group_budget(session: Session) -> int | None:
+    """Tightest per-person budget stated by anyone (THB), or None."""
     budgets = [p.budget_max_thb for p in session.prefs.values() if p.budget_max_thb]
     return min(budgets) if budgets else None
 
@@ -89,6 +92,7 @@ BUDGET_PRICE_LEVELS = [(100, 1), (250, 2), (500, 3)]  # (<= budget, max level); 
 
 
 def max_price_level(budget_thb: int) -> int:
+    """Highest Google price level (1-4) allowed by a per-person budget in THB."""
     for limit, level in BUDGET_PRICE_LEVELS:
         if budget_thb <= limit:
             return level

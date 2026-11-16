@@ -140,27 +140,63 @@ def test_sqs_failure_propagates_so_line_redelivers():
 
 # ---------------------------------------------------------------- size limit
 def test_large_valid_body_is_processed_without_truncation():
-    """There is no explicit size cap in code (Function URL limits the payload to 6 MB; LINE bodies are
-    far smaller). Characterisation: ~1 MB of 'noise' events still parse and filter correctly."""
+    """A body just under MAX_BODY_BYTES (256 KB) of 'noise' events still parses and filters correctly."""
     rec = Recorder()
-    noise = [text_event("G", "A", "555") for _ in range(3000)]
+    noise = [text_event("G", "A", "555") for _ in range(1100)]
     keep = text_event("G", "B", "@bot กินไรดีแถวอารีย์")
     b = body_of(*noise, keep)
-    assert len(b) > 500_000
+    assert 150_000 < len(b) <= webhook.MAX_BODY_BYTES
     assert process(b, sign(b), SECRET, rec)["statusCode"] == 200
     assert len(rec.sent) == 1
 
 
-def test_oversized_unsigned_body_is_rejected_before_json_parse():
-    """Signature is checked before parsing, so a huge/garbage unsigned body costs one HMAC, not a parse."""
-    huge = b"[" * 2_000_000  # would blow the JSON parser's recursion if parsed
-    assert process(huge, "bad", SECRET, Recorder())["statusCode"] == 401
+def test_unsigned_garbage_body_is_401_before_json_parse():
+    """Signature is checked before parsing, so garbage unsigned input costs one HMAC, not a parse."""
+    garbage = b"[" * 200_000  # under the size cap; would blow the JSON parser's recursion if parsed
+    assert process(garbage, "bad", SECRET, Recorder())["statusCode"] == 401
+
+
+@pytest.mark.parametrize("signature", ["bad", None])
+def test_body_over_256kb_is_413_without_hmac_or_parse(signature):
+    rec = Recorder()
+    big = b"x" * (webhook.MAX_BODY_BYTES + 1)
+    assert process(big, signature, SECRET, rec)["statusCode"] == 413 and rec.sent == []
+    big_signed = b" " * (webhook.MAX_BODY_BYTES + 1)
+    assert process(big_signed, sign(big_signed), SECRET, rec)["statusCode"] == 413
+
+
+def test_body_exactly_at_limit_is_accepted():
+    rec = Recorder()
+    b = b'{"events":[]}'
+    b = b + b" " * (webhook.MAX_BODY_BYTES - len(b))
+    assert len(b) == webhook.MAX_BODY_BYTES
+    assert process(b, sign(b), SECRET, rec)["statusCode"] == 200
+
+
+@pytest.mark.parametrize("raw", [b"not json", b"{", b"\xff\xfe", b"[1,2]", b'"str"', b'{"events": "x"}',
+                                 b'{"events": [1]}', b"null"])
+def test_valid_signature_but_invalid_json_is_400_not_an_exception(raw):
+    rec = Recorder()
+    assert process(raw, sign(raw), SECRET, rec)["statusCode"] == 400 and rec.sent == []
+
+
+def test_fallback_dedup_id_is_sha256_of_canonical_json():
+    a = {"type": "join", "source": {"groupId": "G", "type": "group"}}
+    b = {"source": {"type": "group", "groupId": "G"}, "type": "join"}  # same event, other key order
+    assert webhook.fallback_dedup_id(a) == webhook.fallback_dedup_id(b)
+    assert len(webhook.fallback_dedup_id(a)) == 64 and webhook.fallback_dedup_id(a) != webhook.fallback_dedup_id(
+        {**a, "type": "leave"})
+    rec = Recorder()
+    body = body_of(a)
+    process(body, sign(body), SECRET, rec)
+    assert rec.sent[0][2] == webhook.fallback_dedup_id(a)
 
 
 # ---------------------------------------------------------------- should_enqueue
 @pytest.mark.parametrize("event,expected", [
     ({"type": "join"}, True),
     ({"type": "leave"}, True),
+    ({"type": "memberLeft"}, True),
     ({"type": "postback"}, True),
     ({"type": "follow"}, False),
     ({"type": "unsend"}, False),
@@ -261,10 +297,7 @@ def test_handler_cold_start_loads_only_the_signature_secret(monkeypatch):
     monkeypatch.setattr(webhook, "_sqs", None)
 
 
-# ---------------------------------------------------------------- known weakness (tracked, not hidden)
-@pytest.mark.xfail(strict=False, reason="webhook.process falls back to hash(json.dumps(ev)) for events without "
-                                        "webhookEventId; str hash is salted per process, so the SQS dedup id "
-                                        "differs between Lambda cold starts. LINE always sends the id, so low risk.")
+# ---------------------------------------------------------------- fallback dedup id (was a known weakness)
 def test_fallback_dedup_id_is_stable_across_processes():
     code = (
         "import json,sys;from handlers.webhook import process;sent=[];"

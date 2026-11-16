@@ -26,11 +26,19 @@ _PRICE = {"PRICE_LEVEL_FREE": 0, "PRICE_LEVEL_INEXPENSIVE": 1, "PRICE_LEVEL_MODE
 
 
 class Places(Protocol):
-    async def search_text(self, query: str, center: LatLng, radius_km: float) -> list[PlaceCandidate]: ...
-    async def geocode(self, name: str) -> LatLng | None: ...
+    """Places provider interface: text search around a point, and geocoding of an area name."""
+
+    async def search_text(self, query: str, center: LatLng, radius_km: float) -> list[PlaceCandidate]:
+        """Search places for a text query within radius_km of center."""
+        ...
+    async def geocode(self, name: str) -> LatLng | None:
+        """Coordinates of an area name, or None if unknown."""
+        ...
 
 
 class GooglePlaces:
+    """Google Places API (New) client. Network and HTTP errors propagate; the search layer contains them."""
+
     def __init__(self, api_key: str, timeout_s: float = 5.0):
         self._api_key = api_key
         self._timeout_s = timeout_s
@@ -44,6 +52,7 @@ class GooglePlaces:
         return resp.json().get("places", [])
 
     async def search_text(self, query: str, center: LatLng, radius_km: float) -> list[PlaceCandidate]:
+        """Text Search restricted to a circle around center; maps results to PlaceCandidate."""
         body = {
             "textQuery": query,
             "languageCode": "th",
@@ -57,6 +66,7 @@ class GooglePlaces:
         return [p for raw in await self._post(body) if (p := _parse(raw))]
 
     async def geocode(self, name: str) -> LatLng | None:
+        """Resolve an area name to coordinates via a one-result Text Search; None when nothing is found."""
         raw = await self._post({"textQuery": f"{name} กรุงเทพ", "languageCode": "th", "pageSize": 1})
         if not raw or "location" not in raw[0]:
             return None
@@ -107,6 +117,7 @@ class FakePlaces:
         self.calls: list[str] = []
 
     async def search_text(self, query: str, center: LatLng, radius_km: float) -> list[PlaceCandidate]:
+        """Offline: places whose tags occur in the query (activity places only if asked); records the query."""
         self.calls.append(query)
         matched = [p for p in self.places if any(tag in query for tag in p.types)]
         if not matched:
@@ -114,5 +125,6 @@ class FakePlaces:
         return [p.model_copy(deep=True) for p in matched]
 
     async def geocode(self, name: str) -> LatLng | None:
+        """Offline: always None (unknown area); records the call."""
         self.calls.append(f"geocode:{name}")
         return None

@@ -24,6 +24,8 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 class PostgresStore:
+    """Store on local Postgres (STORE=postgres) for dev and contract tests; no AWS needed."""
+
     def __init__(self, dsn: str, *, auto_migrate: bool = True):
         self._dsn = dsn
         self._local = threading.local()
@@ -59,6 +61,7 @@ class PostgresStore:
         return "".join(parts)
 
     def close(self) -> None:
+        """Close the database connection."""
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
@@ -80,6 +83,7 @@ class PostgresStore:
     # -- Store protocol ---------------------------------------------------
     def seen_event(self, event_id: str, now: int) -> bool:
         # Insert, or take over an expired row. Returns a row only if WE claimed it.
+        """Atomically record the event id; True if it was already seen (duplicate delivery)."""
         row = self._conn().execute(
             "INSERT INTO pnd_events (event_id, expires_at) VALUES (%s, %s) "
             "ON CONFLICT (event_id) DO UPDATE SET expires_at = EXCLUDED.expires_at "
@@ -90,15 +94,18 @@ class PostgresStore:
         return row is None
 
     def forget_event(self, event_id: str) -> None:
+        """Un-record an event id after a failed attempt so the retry is processed."""
         self._conn().execute("DELETE FROM pnd_events WHERE event_id = %s", (event_id,))
 
     def get_session(self, group_id: str) -> Session | None:
+        """The group's active session, or None."""
         row = self._conn().execute(
             "SELECT data FROM pnd_sessions WHERE group_id = %s", (group_id,)
         ).fetchone()
         return Session.model_validate(row[0]) if row else None
 
     def put_session(self, session: Session) -> None:
+        """Create or replace the group's session (expires with the session)."""
         self._conn().execute(
             "INSERT INTO pnd_sessions (group_id, data, expires_at) VALUES (%s, %s, %s) "
             "ON CONFLICT (group_id) DO UPDATE SET data = EXCLUDED.data, "
@@ -107,10 +114,12 @@ class PostgresStore:
         )
 
     def delete_session(self, group_id: str) -> None:
+        """Delete the group's session."""
         self._conn().execute("DELETE FROM pnd_sessions WHERE group_id = %s", (group_id,))
 
     def incr(self, key: str, now: int) -> int:
         # Atomic. Expired counter restarts at 1 (DynamoDB: row would already be TTL-deleted).
+        """Atomically increment a daily counter and return the new value."""
         row = self._conn().execute(
             "INSERT INTO pnd_counters (key, value, expires_at) VALUES (%s, 1, %s) "
             "ON CONFLICT (key) DO UPDATE SET "

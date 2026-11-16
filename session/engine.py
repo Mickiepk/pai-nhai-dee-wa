@@ -50,11 +50,13 @@ def _bkk_day(now: int) -> str:
 
 
 def self_mentioned(message: dict[str, Any]) -> bool:
+    """True if the LINE message mentions the bot itself (mentionee.isSelf)."""
     mentionees = (message.get("mention") or {}).get("mentionees", [])
     return any(m.get("isSelf") for m in mentionees)
 
 
 def strip_mentions(message: dict[str, Any]) -> str:
+    """Message text with the bot's @mention removed."""
     text: str = message.get("text") or ""
     mentionees = (message.get("mention") or {}).get("mentionees", [])
     for m in sorted(mentionees, key=lambda m: m.get("index", 0), reverse=True):
@@ -64,6 +66,11 @@ def strip_mentions(message: dict[str, Any]) -> str:
 
 
 class SessionEngine:
+    """Per-group state machine (none -> LISTENING <-> CONFIRMING -> ended).
+
+    No I/O of its own: LINE, Gemini, Places and the store are injected.
+    """
+
     def __init__(self, settings: Settings, store: Store, line: LineGateway, llm: Extractor,
                  places: Places, clock: Callable[[], int] = lambda: int(time.time()),
                  id_factory: Callable[[], str] = new_session_id):
@@ -94,6 +101,11 @@ class SessionEngine:
 
     # ------------------------------------------------------------ entry point
     async def handle(self, event: dict[str, Any]) -> None:
+        """Process one LINE event once.
+
+        Skipped when the kill switch is on or the event id was seen; on failure the id is forgotten and the
+        exception re-raised so SQS retries.
+        """
         if not self.s.bot_enabled:
             return
         now = self.clock()
@@ -120,11 +132,29 @@ class SessionEngine:
             await self.line.reply(token, [cards.text(GREETING)])
         elif etype == "leave":  # PDPA: delete everything for this group
             self.store.delete_session(gid)
+        elif etype == "memberLeft":  # PDPA + no stuck confirmation: forget the people who left
+            self._forget_members(gid, [m.get("userId") for m in event.get("left", {}).get("members", [])], now)
         elif etype == "message":
             await self._on_message(gid, src.get("userId", "unknown"), token, event["message"], now)
         elif etype == "postback":
             await self._on_postback(gid, src.get("userId", "unknown"), token,
                                     event.get("postback", {}).get("data", ""), now)
+
+    def _forget_members(self, gid: str, user_ids: list[str | None], now: int) -> None:
+        """A member left the group: drop them from participants/acks/prefs so we never wait for their ack.
+        No reply (memberLeft carries no replyToken); if everyone left, the confirmation is cancelled."""
+        session = self._active(gid, now)
+        if session is None:
+            return
+        for uid in filter(None, user_ids):
+            if uid in session.participants:
+                session.participants.remove(uid)
+            if uid in session.acks:
+                session.acks.remove(uid)
+            session.prefs.pop(uid, None)
+        if session.state == State.CONFIRMING and not session.participants:
+            self._cancel_confirming(session)
+        self.store.put_session(session)
 
     # ------------------------------------------------------------ helpers
     def _active(self, gid: str, now: int) -> Session | None:
@@ -201,8 +231,7 @@ class SessionEngine:
 
         if replies:
             await self.line.reply(token, replies)
-        if not session.ended:
-            self.store.put_session(session)
+        self._persist(session)
 
     async def _start(self, gid: str, uid: str, token: str, text: str, now: int) -> None:
         delta = await self._extract(None, text, True)
@@ -251,6 +280,7 @@ class SessionEngine:
             return [cards.text(f"วันนี้กลุ่มนี้ค้นครบ {self.s.max_searches_per_group_per_day} ครั้งแล้ว พรุ่งนี้มาใหม่นะ")]
 
         def spend() -> bool:  # every Places call (geocode and text search) counts against the cap
+            """Reserve one Places call against the global daily cap; False when exhausted."""
             return self.store.incr(f"QUOTA#PLACES#{day}", now) <= self.s.max_places_calls_per_day
 
         outcome = await search.search(session, self.places, exclude_last=exclude_last, spend=spend)
@@ -291,8 +321,15 @@ class SessionEngine:
         return [cards.confirm(session, session.candidate, [names[u] for u in session.participants])]
 
     def _end(self, session: Session) -> None:
-        self.store.delete_session(session.group_id)
+        """Mark the session finished. It is deleted only after the reply went out (see _persist), so a failed
+        reply (expired token, LINE 5xx) leaves the old state in the store and the SQS retry can finish the job."""
         session.ended = True
+
+    def _persist(self, session: Session) -> None:
+        if session.ended:
+            self.store.delete_session(session.group_id)
+        else:
+            self.store.put_session(session)
 
     # ------------------------------------------------------------ postbacks
     async def _on_postback(self, gid: str, uid: str, token: str, data: str, now: int) -> None:
@@ -324,8 +361,7 @@ class SessionEngine:
                 replies = self._on_ack(session, uid, q.get("v") == "yes")
         if replies:
             await self.line.reply(token, replies)
-        if not session.ended:
-            self.store.put_session(session)
+        self._persist(session)
 
     def _on_ack(self, session: Session, uid: str, yes: bool) -> list[Msg]:
         # Rule: any group member may tap, but is registered as a participant FIRST, for both
@@ -350,4 +386,5 @@ def _is_confirm_card(msg: Msg) -> bool:
 
 
 def all_acked(session: Session) -> bool:
+    """True when there is at least one participant and every participant has said yes."""
     return bool(session.participants) and set(session.participants) <= set(session.acks)

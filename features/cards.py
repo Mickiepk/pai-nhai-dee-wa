@@ -12,6 +12,7 @@ ATTRIBUTION = "ข้อมูลร้านจาก Google Maps"
 
 
 def text(t: str, quick: list[tuple[str, str]] | None = None) -> Msg:
+    """Plain text message, optionally with quick-reply buttons [(label, postback data)]."""
     msg: Msg = {"type": "text", "text": t}
     if quick:
         msg["quickReply"] = {"items": [
@@ -43,6 +44,7 @@ def _bubble(body: list[dict[str, Any]], footer: list[dict[str, Any]]) -> dict[st
 
 
 def flex(alt: str, contents: dict[str, Any]) -> Msg:
+    """Wrap a Flex bubble as a LINE message with the given alt text."""
     return {"type": "flex", "altText": alt[:400], "contents": contents}
 
 
@@ -50,6 +52,7 @@ _PURPOSE = {"food": "ใครอยากกินอะไร", "activity": "�
 
 
 def listening_notice(session: Session, minutes: int) -> Msg:
+    """Notice that the bot is listening for `minutes`, with the stop button."""
     body = [
         _t("👂 เปิดโหมดช่วยคิดละ", weight="bold"),
         _t(f"เราจะอ่านแชตกลุ่มนี้ไม่เกิน {minutes} นาที เพื่อจำว่า{_PURPOSE.get(session.kind, _PURPOSE['food'])} "
@@ -60,6 +63,7 @@ def listening_notice(session: Session, minutes: int) -> Msg:
 
 
 def suggestions(session: Session, items: list[Suggestion], header: str) -> list[Msg]:
+    """Header text plus one card per suggestion (pick buttons carry the session id)."""
     area = session.area_label or "จุดที่บอก"
     bubbles = []
     for i, s in enumerate(items, start=1):
@@ -78,6 +82,7 @@ def suggestions(session: Session, items: list[Suggestion], header: str) -> list[
 
 
 def confirm(session: Session, cand: Suggestion, names: list[str]) -> Msg:
+    """Confirmation card for the candidate: participant names and the yes/no buttons for this confirm round."""
     sid = session.session_id
     body = [
         _t("สรุปว่าไปที่นี่นะ?", weight="bold"),
@@ -92,6 +97,7 @@ def confirm(session: Session, cand: Suggestion, names: list[str]) -> Msg:
 
 
 def plan(session: Session, cand: Suggestion) -> Msg:
+    """Final plan card (place, distance, time, map link) sent when everyone has said yes."""
     body = [
         _t("🎉 จบ! ได้ที่ไปละ", weight="bold"),
         _t(cand.name, size="lg", weight="bold"),
@@ -103,6 +109,7 @@ def plan(session: Session, cand: Suggestion) -> Msg:
 
 
 def announcement(session: Session, names: dict[str, str]) -> Msg:
+    """Summary of area, time, wants, per-person preferences and candidate (on request)."""
     lines = ["📣 สรุปตอนนี้"]
     if session.area_label:
         lines.append(f"ย่าน: {session.area_label}")
@@ -127,5 +134,6 @@ def announcement(session: Session, names: dict[str, str]) -> Msg:
 
 
 def vote_stub(session: Session) -> Msg:
+    """Static hint to use LINE's own poll; no voting state is kept."""
     return text("โหวตใช้โพลของ LINE ได้เลยนะ (กด + แล้วเลือก โพล) ไวกว่า 😎 "
                 "หรือกด เอาร้านนี้ ใต้การ์ดร้านก็ได้")

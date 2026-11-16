@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,6 +177,7 @@ class Result:
 
 
 def _build(case: dict[str, Any], rng: random.Random | None, seed: int = 1234) -> World:
+    os.environ.pop("GEMINI_PAID_TIER", None)  # the sandbox must not depend on the caller's shell (see SBX-43)
     cfg = dict(case.get("settings") or {})
     if case.get("llm") == "scripted":  # the scripted path models a PAID Gemini deployment unless a case says otherwise
         cfg.setdefault("gemini_paid_tier_confirmed", True)
@@ -226,7 +228,12 @@ _ACTS = {"ack_yes": "act=ack&v=yes", "ack_no": "act=ack&v=no", "stop": "act=stop
 def _make_event(w: World, step: dict[str, Any], group: str) -> dict[str, Any] | None:
     if "say" in step:
         user, text = step["say"]
+        if "{long:" in text:  # expand a long filler deterministically: "{long:20000}"
+            n = int(text.split("{long:")[1].split("}")[0])
+            text = text.replace(f"{{long:{n}}}", ("อยากกินอะไรดีนะ " * (n // 8 + 1))[:n])
         ev = _event(w, "message", group, user)
+        if step.get("dm"):  # 1:1 chat with the bot: source is a user, there is no group
+            ev["source"] = {"type": "user", "userId": user}
         msg: dict[str, Any] = {"type": "text", "id": ev["webhookEventId"], "text": text}
         if text.startswith(BOT_TAG):
             msg["mention"] = {"mentionees": [{"index": 0, "length": len(BOT_TAG), "type": "user",
@@ -263,6 +270,11 @@ def _make_event(w: World, step: dict[str, Any], group: str) -> dict[str, Any] | 
         return _event(w, "join", group, None)
     if "leave" in step:
         return _event(w, "leave", group, None)
+    if "member_left" in step:  # a member leaves the group (no replyToken in the real event)
+        ev = _event(w, "memberLeft", group, None)
+        ev.pop("replyToken")
+        ev["left"] = {"members": [{"type": "user", "userId": step["member_left"]}]}
+        return ev
     if step.get("dup") or step.get("retry"):
         return w.last_event
     return None

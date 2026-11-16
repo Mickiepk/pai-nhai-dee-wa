@@ -11,6 +11,8 @@ Request = Literal["search", "announce", "vote", "stop", "none"]
 
 
 class LatLng(BaseModel):
+    """A WGS84 coordinate."""
+
     lat: float
     lng: float
 
@@ -37,6 +39,8 @@ class MessageDelta(BaseModel):
 
 
 class PlaceCandidate(BaseModel):
+    """A place returned by a Places search, before ranking (distance filled in by features.search.rank)."""
+
     place_id: str
     name: str
     latlng: LatLng

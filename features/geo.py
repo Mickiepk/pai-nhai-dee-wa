@@ -26,6 +26,7 @@ AREA_CENTERS: dict[str, LatLng] = {
 
 
 def haversine_km(a: LatLng, b: LatLng) -> float:
+    """Great-circle distance between two points in km."""
     p1, p2 = math.radians(a.lat), math.radians(b.lat)
     dp = p2 - p1
     dl = math.radians(b.lng - a.lng)
@@ -34,6 +35,7 @@ def haversine_km(a: LatLng, b: LatLng) -> float:
 
 
 def format_km(km: float) -> str:
+    """Distance for cards: '~450 ม.' below 1 km, else '~1.2 กม.'."""
     return f"~{km * 1000:.0f} ม." if km < 1 else f"~{km:.1f} กม."
 
 
@@ -43,4 +45,5 @@ def format_radius(km: float) -> str:
 
 
 def maps_link(name: str, place_id: str) -> str:
+    """Google Maps URL that opens a place by name and place id."""
     return f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={quote(place_id)}"

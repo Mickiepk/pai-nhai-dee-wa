@@ -30,6 +30,7 @@ def _get_engine() -> SessionEngine:
 
 
 def handler(sqs_event: dict[str, Any], _ctx: Any) -> dict[str, Any]:
+    """Lambda entry (SQS): run each record through the engine; return failures as batchItemFailures."""
     engine = _get_engine()
     failures = []
     for record in sqs_event.get("Records", []):

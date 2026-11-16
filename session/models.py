@@ -10,11 +10,15 @@ from adapters.models import LatLng
 
 
 class State(StrEnum):
+    """Conversation state of a group session: LISTENING or CONFIRMING."""
+
     LISTENING = "listening"
     CONFIRMING = "confirming"
 
 
 class UserPrefs(BaseModel):
+    """One person's extracted preferences (likes, dislikes, just ate, budget). Never raw text."""
+
     likes: list[str] = Field(default_factory=list)
     dislikes: list[str] = Field(default_factory=list)
     just_ate: list[str] = Field(default_factory=list)
@@ -32,6 +36,8 @@ class Suggestion(BaseModel):
 
 
 class Session(BaseModel):
+    """Everything stored per group while the bot is listening; expires after the configured minutes."""
+
     session_id: str
     group_id: str
     kind: str = "food"  # food | activity | meetup
@@ -61,4 +67,5 @@ class Session(BaseModel):
         return self.area
 
     def is_expired(self, now: int) -> bool:
+        """True once `now` (epoch seconds) reaches expires_at."""
         return now >= self.expires_at
