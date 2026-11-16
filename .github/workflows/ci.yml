@@ -1,17 +1,182 @@
+# PR / push pipeline. Mirrors `make ci` (+ Postgres). No cloud credentials, no network calls to
+# LINE / Gemini / Places: everything runs on fakes. See docs/TEST_STRATEGY.md.
 name: ci
+
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
-  test:
+  lint:
+    name: lint (ruff)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: pytest -q
-# Deploy is manual (make deploy-dev). No cloud credentials in CI.
+
+  test-memory:
+    name: unit + integration (memory store)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: pytest tests/unit tests/integration (STORE=memory)
+        env:
+          STORE: memory
+        run: pytest -q tests/unit tests/integration
+
+  test-postgres:
+    name: contract + full suite (Postgres 16) + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pnd
+          POSTGRES_PASSWORD: pnd
+          POSTGRES_DB: pnd
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U pnd -d pnd"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      STORE: postgres
+      DATABASE_URL: postgresql://pnd:pnd@localhost:54329/pnd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Store contract tests (memory + Postgres + DynamoDB/moto)
+        run: pytest -q tests/contract -rs
+      - name: Full suite on Postgres with coverage (fails under fail_under in pyproject.toml)
+        run: >-
+          pytest -q --cov --cov-report=term-missing:skip-covered
+          --cov-report=xml:coverage.xml --junitxml=junit.xml
+      - name: Contract tests must not silently skip Postgres
+        run: |
+          pytest -q tests/contract -rs -k postgres 2>&1 | tee /tmp/pg-contract.txt
+          if grep -qi "skipped" /tmp/pg-contract.txt; then echo "::error::Postgres contract tests were skipped"; exit 1; fi
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f coverage.xml ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          r = ET.parse("coverage.xml").getroot()
+          print(f"### Coverage: {float(r.get('line-rate')) * 100:.1f}% lines")
+          PY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-and-junit
+          path: |
+            coverage.xml
+            junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  sandbox:
+    name: sandbox scenarios + determinism
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: make sandbox (every scenario x 5 runs, exits 1 on FAIL / XPASS / non-determinism)
+        run: make sandbox
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sandbox-report
+          path: reports/sandbox_report.md
+          retention-days: 14
+
+  template:
+    name: SAM template (validate --lint, cfn-lint, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - run: pip install cfn-lint
+      - name: sam validate --lint
+        env:
+          AWS_DEFAULT_REGION: ap-southeast-1
+        run: sam validate --lint --template-file template.yaml
+      - run: cfn-lint template.yaml
+      - name: Cache SAM build
+        uses: actions/cache@v4
+        with:
+          path: .aws-sam
+          key: sam-${{ runner.os }}-${{ hashFiles('template.yaml', 'requirements.txt', 'handlers/**', 'session/**', 'features/**', 'adapters/**', 'store/**', 'wiring.py', 'config.py') }}
+          restore-keys: sam-${{ runner.os }}-
+      - name: sam build (no deploy, no credentials)
+        run: sam build --cached --parallel
+
+  workflows:
+    name: lint workflows (actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install actionlint-py
+      - run: actionlint
+
+  # Single required check for branch protection: add "ci ok" instead of each job above.
+  ci-ok:
+    name: ci ok
+    if: always()
+    needs: [lint, test-memory, test-postgres, sandbox, template, workflows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs succeeded?
+        run: |
+          echo '${{ toJSON(needs) }}'
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then exit 1; fi

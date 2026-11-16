@@ -1,0 +1,10 @@
+# Review ownership. Everything defaults to the repo owner.
+*                       @Mickiepk
+
+# Cost / privacy / infra changes: always owner-reviewed
+/template.yaml          @Mickiepk
+/samconfig.toml         @Mickiepk
+/config.py              @Mickiepk
+/.github/               @Mickiepk
+/docs/DEPLOY.md         @Mickiepk
+/docs/LAUNCH_CHECKLIST.md @Mickiepk

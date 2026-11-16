@@ -14,3 +14,16 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.coverage.run]
+# Production code only. scripts/ (dev tools) and tests/ are not part of the gate.
+source = ["handlers", "session", "features", "adapters", "store", "wiring", "config"]
+
+[tool.coverage.report]
+# Measured 94% with Postgres, ~90% on memory only, 2026-11-16. Gate = measured minus ~7 points so a
+# normal PR passes but a big untested addition fails. Raise it when the measured value rises.
+# See docs/TEST_STRATEGY.md section "Coverage".
+fail_under = 85
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\.$"]

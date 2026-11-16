@@ -1,0 +1,111 @@
+# ============================================================================
+# DISABLED / UNTESTED: no AWS account exists yet. This workflow has NEVER run.
+# It is workflow_dispatch only, so nothing triggers it automatically. Before the first use read
+# docs/DEPLOY.md and complete the "one-time setup" below, then do the first deploy to `dev` by hand.
+#
+# One-time setup (not done):
+#   1. Create an IAM OIDC provider for token.actions.githubusercontent.com and an IAM role whose trust
+#      policy allows repo:<owner>/pai-nhai-dee-wa and the GitHub Environment named below.
+#   2. Add repository secret AWS_ROLE_ARN (ARN of that role). No long-lived access keys are used.
+#   3. Create GitHub Environments `dev` and `prod`; add required reviewers on `prod`.
+#   4. SSM SecureString parameters must already exist (docs/DEPLOY.md section 3).
+# ============================================================================
+name: deploy (manual, untested)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to deploy"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      alert_email:
+        description: "Email for budget / DLQ alarms (SAM parameter AlertEmail)"
+        required: true
+        type: string
+      confirm:
+        description: 'Type "deploy" to confirm (this workflow has never run; see header)'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-${{ inputs.stage }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # OIDC
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [ "$CONFIRM" = "deploy" ] || { echo "::error::type 'deploy' in the confirm input"; exit 1; }
+
+  verify:
+    name: tests before deploy
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q tests/unit tests/integration tests/contract
+      - run: make sandbox
+
+  deploy:
+    name: sam deploy (${{ inputs.stage }})
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.stage }}   # approval gate configured in GitHub repo settings
+    env:
+      AWS_REGION: ap-southeast-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: sam build
+        run: sam build --cached --parallel
+      - name: sam deploy
+        env:
+          STAGE: ${{ inputs.stage }}
+          ALERT_EMAIL: ${{ inputs.alert_email }}
+        run: |
+          sam deploy --config-env "$STAGE" --no-confirm-changeset --no-fail-on-empty-changeset \
+            --parameter-overrides "Stage=$STAGE" "AlertEmail=$ALERT_EMAIL"
+      - name: Read WebhookUrl from stack outputs
+        id: url
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          url=$(aws cloudformation describe-stacks --stack-name "pai-nhai-dee-wa-${STAGE}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebhookUrl'].OutputValue" --output text)
+          [ -n "$url" ] && [ "$url" != "None" ] || { echo "::error::WebhookUrl output not found"; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Smoke test (signed empty-event webhooks only; no LINE/Gemini/Places calls)
+        env:
+          STAGE: ${{ inputs.stage }}
+          WEBHOOK_URL: ${{ steps.url.outputs.url }}
+        run: |
+          python -m scripts.smoke --url "$WEBHOOK_URL" \
+            --secret-ssm "/pai-nhai-dee-wa/${STAGE}/line-channel-secret"

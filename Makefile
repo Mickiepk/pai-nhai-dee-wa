@@ -44,3 +44,21 @@ test-pg: pg-up   ## whole suite + store contract against Postgres
 
 simulate-pg: pg-up
 	STORE=postgres $(PY) -m scripts.simulate
+
+# ---- quality gates: `make ci` mirrors the PR pipeline (.github/workflows/ci.yml). See docs/TEST_STRATEGY.md ----
+.PHONY: cov template-lint ci ci-full lint-actions
+
+cov:          ## whole suite with coverage (fails under fail_under in pyproject.toml), writes coverage.xml
+	$(PY) -m pytest -q --cov --cov-report=term-missing:skip-covered --cov-report=xml
+
+template-lint:  ## sam validate --lint + cfn-lint (skipped with a notice if the tools are missing)
+	@if command -v sam >/dev/null 2>&1; then AWS_DEFAULT_REGION=$${AWS_DEFAULT_REGION:-ap-southeast-1} sam validate --lint --template-file template.yaml; else echo "SKIP: sam not installed (brew install aws-sam-cli)"; fi
+	@if command -v cfn-lint >/dev/null 2>&1; then cfn-lint template.yaml; else echo "SKIP: cfn-lint not installed (pip install cfn-lint)"; fi
+
+ci: lint cov sandbox template-lint   ## same checks as the PR pipeline, on memory store (no Docker/Postgres needed)
+	@echo "make ci: OK"
+
+ci-full: ci test-pg   ## ci + whole suite and contract tests against local Postgres
+
+lint-actions:  ## lint .github/workflows with actionlint (pip install actionlint-py)
+	actionlint

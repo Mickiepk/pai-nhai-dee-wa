@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 .aws-sam/
 samconfig.local.toml
+.coverage
+coverage.xml
+htmlcov/
