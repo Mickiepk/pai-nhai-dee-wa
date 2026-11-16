@@ -42,6 +42,7 @@ class Session(BaseModel):
     area_center: LatLng | None = None
     group_wants: list[str] = Field(default_factory=list)  # most recent last
     when: str | None = None
+    radius_km: float | None = None  # None = default for the kind (food 3 km, activity 5 km)
     prefs: dict[str, UserPrefs] = Field(default_factory=dict)  # userId -> prefs
     participants: list[str] = Field(default_factory=list)  # userIds who spoke, in order
     llm_calls: int = 0

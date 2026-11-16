@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from adapters.line import FakeLine
-from config import Settings, load_settings
+from config import Settings, load_dotenv, load_settings
 from scripts.events import postback_event, text_event
 from scripts.render import render
 from session.engine import SessionEngine
@@ -29,6 +29,8 @@ _BUTTON = re.compile(r"^\[(.+?)(?:\s+(\d))?\]$")
 
 
 def make_sim(live: bool) -> tuple[SessionEngine, FakeLine]:
+    if live:
+        load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # keys live in .env, no `source` needed
     settings = load_settings() if live else Settings()
     if live:
         settings = settings.model_copy(update={"llm_provider": "gemini", "places_provider": "google"})

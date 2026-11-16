@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from adapters.line import verify_signature
 from config import load_settings
+from session.engine import SessionEngine
 from wiring import build_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -23,6 +24,18 @@ settings = load_settings()
 if settings.line_provider != "real":
     settings = settings.model_copy(update={"line_provider": "real"})
 engine = build_engine(settings)
+
+
+def run_event(eng: SessionEngine, ev: dict, logger: logging.Logger = log) -> bool:
+    """Handle one event. Failures log only the exception TYPE: tracebacks and exception messages
+    can embed chat text (e.g. validation errors echo their input), so they are never logged."""
+    logger.info("event type=%s", ev.get("type"))  # never log text
+    try:
+        asyncio.run(eng.handle(ev))
+        return True
+    except Exception as exc:
+        logger.error("event failed: %s", type(exc).__name__)
+        return False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -43,11 +56,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         for ev in json.loads(body).get("events", []):
-            log.info("event type=%s", ev.get("type"))  # never log text
-            try:
-                asyncio.run(engine.handle(ev))
-            except Exception:
-                log.exception("event failed")
+            run_event(engine, ev)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"ok")

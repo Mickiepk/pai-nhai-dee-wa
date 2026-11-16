@@ -179,7 +179,7 @@ class SessionEngine:
             return [cards.announcement(session, names)]
         if delta.request == "vote":
             return [cards.vote_stub(session)]
-        if delta.request == "search" or delta.needs_answer:
+        if delta.request == "search" or delta.needs_answer or delta.radius_km or delta.radius_halve:
             return await self._search_replies(session, session.group_id, self.clock(),
                                               exclude_last=delta.rejects_last_suggestion)
         return [cards.text("ฟังอยู่นะ อยากให้หาอะไรเพิ่มก็เรียกได้เลย")]
@@ -190,11 +190,14 @@ class SessionEngine:
         day = _bkk_day(now)
         if self.store.incr(f"QUOTA#GROUP#{gid}#{day}", now) > self.s.max_searches_per_group_per_day:
             return [cards.text(f"วันนี้กลุ่มนี้ค้นครบ {self.s.max_searches_per_group_per_day} ครั้งแล้ว พรุ่งนี้มาใหม่นะ")]
-        if self.store.incr(f"QUOTA#PLACES#{day}", now) > self.s.max_places_calls_per_day:
+
+        def spend() -> bool:  # every Places call (geocode and text search) counts against the cap
+            return self.store.incr(f"QUOTA#PLACES#{day}", now) <= self.s.max_places_calls_per_day
+
+        outcome = await search.search(session, self.places, exclude_last=exclude_last, spend=spend)
+        if outcome.error == "cap":
             log.warning("global places cap hit")
             return [cards.text("วันนี้คนใช้เยอะจนเต็มโควตาละ พรุ่งนี้มาใหม่นะ 🙏")]
-
-        outcome = await search.search(session, self.places, exclude_last=exclude_last)
         if outcome.error == "no_area":  # area not in AREA_CENTERS and geocode failed
             return [cards.text(f"หาพิกัด{session.area}ไม่เจอ ลองเลือกย่านใกล้ๆ ดูนะ",
                                [(a, f"act=area&a={a}&sid={session.session_id}") for a in AREA_CHOICES])]
@@ -253,11 +256,13 @@ class SessionEngine:
             self.store.put_session(session)
 
     def _on_ack(self, session: Session, uid: str, yes: bool) -> list[Msg]:
+        # Rule: any group member may tap, but is registered as a participant FIRST, for both
+        # ตกลง and ยังก่อน, so everyone who can affect the confirmation is also counted in it.
+        if uid not in session.participants:
+            session.participants.append(uid)
         if not yes:
             session.state, session.candidate, session.acks = State.LISTENING, None, []
             return [cards.text("โอเค ยังไม่สรุป คุยกันต่อได้เลย อยากได้แบบไหนบอกมา")]
-        if uid not in session.participants:
-            session.participants.append(uid)
         if uid not in session.acks:
             session.acks.append(uid)
         if all_acked(session):

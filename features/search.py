@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from adapters.models import LatLng, PlaceCandidate
 from adapters.places import Places
 from features import activity, food
 from features.geo import AREA_CENTERS, haversine_km, maps_link
-from session.merge import avoid_terms
+from session.merge import avoid_terms, current_radius
 from session.models import Session, Suggestion
 
 log = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ log = logging.getLogger(__name__)
 class SearchOutcome:
     suggestions: list[Suggestion]
     radius_km: float
-    error: str | None = None  # "no_area" | "not_found" | "places_failed"
+    error: str | None = None  # "no_area" | "not_found" | "places_failed" | "cap"
 
 
 def build_query(session: Session) -> str:
@@ -28,12 +29,23 @@ def build_query(session: Session) -> str:
     return " ".join(x for x in (want or base, session.area or "") if x)
 
 
-async def resolve_center(session: Session, places: Places) -> LatLng | None:
+class PlacesCapReached(Exception):
+    """The daily global Places cap is used up; no more Places calls (search or geocode)."""
+
+
+Spend = Callable[[], bool]  # reserve one Places call against the daily cap; False = cap hit
+
+
+async def resolve_center(session: Session, places: Places, spend: Spend | None = None) -> LatLng | None:
     if session.area_center:
         return session.area_center
     if not session.area:
         return None
-    center = AREA_CENTERS.get(session.area) or await places.geocode(session.area)
+    center = AREA_CENTERS.get(session.area)
+    if center is None:
+        if spend is not None and not spend():  # a geocode lookup is a billable Places call too
+            raise PlacesCapReached
+        center = await places.geocode(session.area)
     session.area_center = center
     return center
 
@@ -55,9 +67,15 @@ def rank(cands: list[PlaceCandidate], center: LatLng, radius_km: float,
     return kept[:3]
 
 
-async def search(session: Session, places: Places, *, exclude_last: bool = False) -> SearchOutcome:
-    radius = activity.RADIUS_KM if session.kind == "activity" else food.RADIUS_KM
-    center = await resolve_center(session, places)
+async def search(session: Session, places: Places, *, exclude_last: bool = False,
+                 spend: Spend | None = None) -> SearchOutcome:
+    radius = current_radius(session)
+    try:
+        center = await resolve_center(session, places, spend)
+        if center is not None and spend is not None and not spend():
+            raise PlacesCapReached
+    except PlacesCapReached:
+        return SearchOutcome([], radius, "cap")
     if center is None:
         return SearchOutcome([], radius, "no_area")
     exclude = {s.place_id for s in session.suggestions} if exclude_last else set()

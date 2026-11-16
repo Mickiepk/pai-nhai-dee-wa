@@ -3,7 +3,21 @@
 from __future__ import annotations
 
 from adapters.models import MessageDelta
+from features import activity, food
 from session.models import Session, UserPrefs
+
+MIN_RADIUS_KM = 1.0
+MAX_RADIUS_KM = 50.0
+
+
+def clamp_radius(km: float) -> float:
+    return min(MAX_RADIUS_KM, max(0.5, km))
+
+
+def current_radius(session: Session) -> float:
+    if session.radius_km:
+        return session.radius_km
+    return activity.RADIUS_KM if session.kind == "activity" else food.RADIUS_KM
 
 
 def _add(items: list[str], new: list[str]) -> None:
@@ -41,6 +55,10 @@ def apply_delta(session: Session, user_id: str, delta: MessageDelta) -> Session:
         session.area = delta.area
     if delta.when:
         session.when = delta.when
+    if delta.radius_km:  # latest statement wins: explicit value, or halve the current one
+        session.radius_km = clamp_radius(delta.radius_km)
+    elif delta.radius_halve:
+        session.radius_km = max(MIN_RADIUS_KM, round(current_radius(session) / 2, 2))
     if delta.intent in ("food", "activity") and not session.suggestions:
         session.kind = delta.intent
     return session

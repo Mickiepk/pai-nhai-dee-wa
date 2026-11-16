@@ -6,6 +6,7 @@ Every hard cost cap lives here so the pilot stays under the 1,000 THB/month budg
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -76,6 +77,25 @@ class Settings(BaseModel):
         if not self.bot_enabled:
             out.append("BOT_ENABLED=false: kill switch is ON, bot stays silent")
         return out
+
+
+def load_dotenv(path: str | Path = ".env") -> bool:
+    """Minimal .env loader (KEY=VALUE, # comments, optional quotes). Never overrides real env vars."""
+    p = Path(path)
+    if not p.is_file():
+        return False
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        val = val.strip()
+        if val[:1] in "\"'" and val[-1:] == val[:1] and len(val) >= 2:
+            val = val[1:-1]
+        else:
+            val = val.split(" #", 1)[0].strip()  # inline comment
+        os.environ.setdefault(key.strip().removeprefix("export ").strip(), val)
+    return True
 
 
 def load_settings() -> Settings:

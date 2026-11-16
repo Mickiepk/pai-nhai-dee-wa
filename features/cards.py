@@ -46,10 +46,13 @@ def flex(alt: str, contents: dict[str, Any]) -> Msg:
     return {"type": "flex", "altText": alt[:400], "contents": contents}
 
 
+_PURPOSE = {"food": "ใครอยากกินอะไร", "activity": "ใครอยากทำอะไร", "meetup": "ใครสะดวกเมื่อไหร่ที่ไหน"}
+
+
 def listening_notice(session: Session, minutes: int) -> Msg:
     body = [
         _t("👂 เปิดโหมดช่วยคิดละ", weight="bold"),
-        _t(f"เราจะอ่านแชตกลุ่มนี้ไม่เกิน {minutes} นาที เพื่อจำว่าใครอยากกินอะไร "
+        _t(f"เราจะอ่านแชตกลุ่มนี้ไม่เกิน {minutes} นาที เพื่อจำว่า{_PURPOSE.get(session.kind, _PURPOSE['food'])} "
            "ไม่เก็บข้อความ เก็บแค่สรุปความชอบ", size="sm", color="#666666"),
     ]
     return flex(f"เราจะฟังแชตกลุ่มนี้ไม่เกิน {minutes} นาที กด หยุดฟัง ได้ตลอด",

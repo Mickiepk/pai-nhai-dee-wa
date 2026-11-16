@@ -31,6 +31,15 @@ stateDiagram-v2
 ```
 
 - **Participants** = users who sent a text message during the session (or tapped a card button).
+- **Confirmation rule**: any group member may tap a confirmation button, but is registered as a
+  participant first, for BOTH [ตกลง] and [ยังก่อน]. So a lurker who taps ตกลง becomes a required
+  confirmer (the "n/m" count grows), and a lurker who taps ยังก่อน is counted and cancels the
+  confirmation like anyone else. Nobody can affect the outcome without being counted.
+- **Radius**: default 3 km (food) / 5 km (activity). "ไม่เกิน 5 กม./โล", "within 5 km" set it; "ไกลไป"
+  halves it (min 1 km). Latest statement wins; stored as `Session.radius_km` (rules and LLM
+  `MessageDelta.radius_km` / `radius_halve` share one merge path).
+- **Offline spelling tolerance**: `adapters/lexicon.py` is a table (`ALIASES`) of slang, typos and simple
+  English mapped to canonical Thai terms before the rules run (deterministic, add a row to extend).
 - **Speaking rule**: the bot replies only to an @mention, a detected decision, or a button tap.
 - **No session = no reading.** Non-mention messages are ignored entirely.
 
@@ -38,7 +47,7 @@ stateDiagram-v2
 
 Extracted data only: area, group wants, per-user likes/dislikes/just-ate/budget, participants
 (user IDs), last ≤3 suggestions (place_id, name, lat/lng, distance), candidate, acks, LLM call count.
-Raw chat text is never stored or logged. Other items: `EVENT#<id>/SEEN` (dedup, 1 day),
+Raw chat text is never stored or logged (error handlers log only the exception type, never tracebacks or messages). Other items: `EVENT#<id>/SEEN` (dedup, 1 day),
 `QUOTA#GROUP#<g>#<day>` and `QUOTA#PLACES#<day>` counters (2 days).
 
 ## Cost guards
@@ -47,7 +56,7 @@ Raw chat text is never stored or logged. Other items: `EVENT#<id>/SEEN` (dedup, 
 |---|---|---|
 | LLM calls per session | 40, then free rule-based fallback | `SessionEngine._extract` |
 | Searches per group per day | 10 | `SessionEngine._search_replies` |
-| Places calls per day (global) | 300 | same |
+| Places calls per day (global) | 300, counts every Places call incl. area geocode lookups | `SessionEngine._search_replies` (`spend`) |
 | Kill switch | `BOT_ENABLED=false` | `SessionEngine.handle` |
 | Chat reading needs Gemini paid tier | `GEMINI_PAID_TIER_CONFIRMED=true` | `Settings.chat_reading_enabled` |
 | AWS Budgets alarm | USD 28 (~1,000 THB) | `template.yaml` |

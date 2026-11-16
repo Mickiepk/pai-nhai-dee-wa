@@ -26,6 +26,8 @@ class MessageDelta(BaseModel):
     just_ate: list[str] = Field(default_factory=list)
     budget_max_thb: int | None = Field(None, gt=0, le=20000)
     when: str | None = None  # free-form time, e.g. "19:00" or "พรุ่งนี้เย็น"
+    radius_km: float | None = Field(None, gt=0, le=50)  # explicit "ไม่เกิน 5 กม." / "within 5 km"
+    radius_halve: bool = False  # "ไกลไป": halve the current radius (min 1 km)
     rejects_last_suggestion: bool = False
     decision_detected: bool = False  # "โอเค ไปร้านนี้แหละ"
     pick_index: int | None = Field(None, ge=1, le=3)  # "ร้านที่ 2"
