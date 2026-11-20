@@ -1,43 +1,46 @@
 # ไปไหนดีวะ (Pai-nhai-dee-wa)
 
-บอท LINE ที่อยู่ในกลุ่มเหมือนเพื่อนอีกคน ช่วยกลุ่มตัดสินใจว่า **กินอะไร / ทำอะไร** ด้วยร้านจริงจาก Google Maps และระยะจริง
-โดย **อ่านเฉพาะตอนเปิดโหมดช่วยคิด (session ไม่เกิน 60 นาที) และไม่เก็บข้อความแชตดิบ** (PDPA)
+A LINE bot that sits in a group chat like one more friend and helps the group decide **what to eat / what to do**, using real places from Google Maps and real distances.
+It **only reads while a help-me-decide session is open (max 60 minutes) and never stores raw chat text** (PDPA).
+
+> The bot's name and its chat messages are in Thai on purpose: that is the product's user-facing language.
+> Example inputs below (for instance `@bot กินไรดีแถวอารีย์`, "what should we eat around Ari") are real Thai phrases the bot understands. Everything else in this repo is documented in English.
 
 [![ci](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/ci.yml/badge.svg)](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/ci.yml)
 [![regression](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/regression.yml/badge.svg)](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/regression.yml)
 
-> **English summary.** A conversational LINE group-chat bot (Python 3.12, line-bot-sdk v3, Gemini for preference extraction,
+> **Summary.** A conversational LINE group-chat bot (Python 3.12, line-bot-sdk v3, Gemini for preference extraction,
 > Google Places API (New), DynamoDB on AWS / Postgres locally, AWS SAM). `@bot กินไรดีแถวอารีย์` starts a 60-minute *session*:
 > the bot announces it is listening, extracts preferences only (never stores chat text), speaks only when @mentioned or when
 > the group settles on a place, then collects ✅ from every participant and posts a plan card.
 > Everything runs offline with fakes: `make install && make ci && make simulate`, no API keys needed.
 
-## สารบัญ
-1. [บอททำงานยังไง](#บอททำงานยังไง)
+## Table of contents
+1. [How the bot works](#how-the-bot-works)
 2. [Architecture](#architecture)
 3. [Quick start (local)](#quick-start-local)
 4. [Environments: local vs AWS](#environments-local-vs-aws)
 5. [Make targets](#make-targets)
 6. [Config / environment variables](#config--environment-variables)
-7. [Cost guards](#cost-guards-คุมงบ-1000-บาทเดือน)
+7. [Cost guards](#cost-guards-keeping-within-1000-thbmonth)
 8. [Testing overview](#testing-overview)
 9. [CI/CD overview](#cicd-overview)
 10. [Repo map](#repo-map)
 11. [Troubleshooting](#troubleshooting)
-12. [Contributing](#contributing-branching-commit)
-13. [เอกสารทั้งหมด](#เอกสารทั้งหมด)
+12. [Contributing](#contributing-branching-commits)
+13. [All documents](#all-documents)
 
-## บอททำงานยังไง
+## How the bot works
 
-1. มีคน `@ไปไหนดีวะ กินไรดีแถวอารีย์` -> บอทบอกว่า "จะฟังแชตกลุ่มนี้ไม่เกิน 60 นาที" + ปุ่ม **[หยุดฟัง]** แล้วเสนอ 3 ร้าน
-2. ระหว่างนั้นบอท **อ่านแต่ไม่พูด** จำว่าใครชอบ/ไม่เอา/เพิ่งกินอะไร (เก็บแค่สรุป ไม่เก็บข้อความ)
-3. `@ไปไหนดีวะ แถวอารีย์มีบุฟเฟต์นานาชาติไหม` -> บอทค้นจากทุกอย่างที่จำไว้
-4. "โอเค ไปร้านนี้แหละ" -> การ์ดยืนยัน รายชื่อทุกคนที่คุย + ปุ่ม **[ตกลง ✅] [ยังก่อน]**
-5. ครบทุกคน -> การ์ดแผน (ร้าน ระยะเส้นตรง ลิงก์แผนที่ เวลาถ้ามี) แล้วจบ session
-6. โหวต: ใช้โพลของ LINE (`@บอท โหวตหน่อย` จะแนะนำวิธี) · ประกาศสรุป: `@บอท ประกาศหน่อย`
+1. Someone writes `@ไปไหนดีวะ กินไรดีแถวอารีย์` ("what should we eat around Ari") -> the bot says it will listen to this group for at most 60 minutes, shows a **[stop listening]** button, and suggests 3 places.
+2. From then on the bot **reads but stays quiet**. It remembers who likes what, who refuses what, and who just ate what (only a summary is kept, never the messages).
+3. `@ไปไหนดีวะ แถวอารีย์มีบุฟเฟต์นานาชาติไหม` ("is there an international buffet around Ari") -> the bot searches using everything it has remembered.
+4. "OK, let's go to this one" -> a confirmation card lists everyone who took part, with **[ตกลง ✅ (agree)] [ยังก่อน (not yet)]** buttons.
+5. When everyone has answered -> a plan card (place, straight-line distance, map link, time if there is one) and the session ends.
+6. Voting: use LINE's own polls (`@bot โหวตหน่อย`, "let's vote", explains how) · Announcement: `@bot ประกาศหน่อย` ("announce it").
 
-กฎหลักที่ห้ามหลุด: บอทพูดเฉพาะตอนถูก @, ตอนตรวจพบการตัดสินใจ, หรือตอนกดปุ่ม · ไม่มี session = ไม่อ่านแชต ·
-ไม่เก็บ/ไม่ log ข้อความดิบ · LLM สกัดสัญญาณเท่านั้น การตัดสินใจทั้งหมดอยู่ในโค้ด (รายละเอียด: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
+Hard rules that must not leak: the bot speaks only when @mentioned, when it detects a decision, or when a button is pressed · no session = it does not read the chat ·
+raw text is never stored or logged · the LLM only extracts signals, every decision is made in code (details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 
 ## Architecture
 
@@ -75,234 +78,238 @@ flowchart LR
     ST -.-> PG[("Postgres 16<br/>local / CI")]
 ```
 
-- Lambda 2 ตัว: **webhook** (ตรวจ signature, กรองข้อความขยะ, ส่ง SQS แล้วตอบ 200 ทันที) และ **worker** (รัน `SessionEngine`)
-- ตอบกลับด้วย **reply token** ของ event นั้นเท่านั้น (ไม่ใช้ push message)
-- Local ใช้ engine ตัวเดียวกัน ต่างกันที่ตัวรับ event และ Store (ดู [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md))
-- State machine ต่อกลุ่ม: `LISTENING <-> CONFIRMING -> จบ` (diagram ใน [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
+- Two Lambdas: the **webhook** (verifies the signature, drops junk messages, enqueues to SQS and answers 200 immediately) and the **worker** (runs `SessionEngine`)
+- Replies use only the **reply token** of the event being handled (no push messages)
+- Local runs use the same engine; only the event receiver and the Store differ (see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md))
+- Per-group state machine: `LISTENING <-> CONFIRMING -> ended` (diagram in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 
 ## Quick start (local)
 
-ต้องมี Python 3.12+ (macOS: `brew install python@3.12`) · ไม่ต้องมี key ใดๆ
+Needs Python 3.12+ (macOS: `brew install python@3.12`) · no keys required
 
-### A) Memory store (เร็วสุด ไม่ต้องมี Docker)
+### A) Memory store (fastest, no Docker)
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-make install        # ติดตั้ง library
-make ci             # ruff + เทสต์ + coverage + sandbox + lint template (ของปลอมทั้งหมด ไม่เสียเงิน)
-make simulate       # เล่นบทสนทนา A/B/C แถวอารีย์ใน terminal
-python -m scripts.simulate --interactive   # พิมพ์คุยเองเป็นหลายคน เช่น  A: @bot กินไรดีแถวสยาม
+make install        # install libraries
+make ci             # ruff + tests + coverage + sandbox + template lint (all fakes, costs nothing)
+make simulate       # play the A/B/C conversation around Ari in the terminal
+python -m scripts.simulate --interactive   # type as several people yourself, e.g.  A: @bot กินไรดีแถวสยาม
 ```
-บทสนทนาอยู่ที่ `scripts/scenarios/ari_buffet.txt` แก้หรือเขียนไฟล์ใหม่แล้วรัน `python -m scripts.simulate --script ไฟล์.txt`
+The conversation lives in `scripts/scenarios/ari_buffet.txt`. Edit it or write a new file and run `python -m scripts.simulate --script yourfile.txt`
 
-### B) Postgres store (เหมือน AWS มากขึ้น เก็บถาวรในเครื่อง)
+### B) Postgres store (closer to AWS, persists on your machine)
 ```bash
-docker compose up -d      # postgres:16 พอร์ต 54329   (หรือ make pg-up ถ้าไม่มี Docker)
-make test-pg              # เทสต์ทั้งชุด + store contract บน Postgres
-make simulate-pg          # เล่นบทสนทนาบน Postgres
-STORE=postgres make local # เซิร์ฟเวอร์ LINE จริงผ่าน ngrok + Postgres
-make pg-down              # หยุด   (make pg-reset = ล้างข้อมูลทั้งหมด)
+docker compose up -d      # postgres:16 on port 54329   (or make pg-up if you have no Docker)
+make test-pg              # whole suite + store contract tests on Postgres
+make simulate-pg          # play the conversation on Postgres
+STORE=postgres make local # real LINE server through ngrok + Postgres
+make pg-down              # stop   (make pg-reset = wipe all data)
 ```
-URL เริ่มต้น `postgresql://pnd:pnd@localhost:54329/pnd` ตารางสร้างเองอัตโนมัติ (`store/schema.sql`)
+Default URL `postgresql://pnd:pnd@localhost:54329/pnd`; tables are created automatically (`store/schema.sql`)
 
-### C) ทดสอบกับ LINE จริง (ยังไม่ต้องใช้ AWS)
-1. <https://developers.line.biz/console/> -> Provider -> channel แบบ **Messaging API** (แยก dev/prod)
-2. **Basic settings** คัดลอก **Channel secret** · **Messaging API** กด Issue **Channel access token (long-lived)**
-3. LINE Official Account Manager -> Settings -> Account settings -> เปิด **Allow bot to join group chats**
-4. Response settings: ปิด **Auto-reply** และ **Greeting message**, เปิด **Webhook**
+### C) Try it with real LINE (no AWS needed yet)
+1. <https://developers.line.biz/console/> -> Provider -> create a **Messaging API** channel (keep dev and prod separate)
+2. **Basic settings**: copy the **Channel secret** · **Messaging API**: issue a **Channel access token (long-lived)**
+3. LINE Official Account Manager -> Settings -> Account settings -> turn on **Allow bot to join group chats**
+4. Response settings: turn off **Auto-reply** and **Greeting message**, turn on **Webhook**
 5. ```bash
-   cp .env.example .env      # ใส่ LINE_CHANNEL_SECRET และ LINE_CHANNEL_ACCESS_TOKEN
+   cp .env.example .env      # fill in LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN
    make local                # http://localhost:8000/callback
-   ngrok http 8000           # อีกหน้าต่าง
+   ngrok http 8000           # in another window
    ```
-6. เอา URL จาก ngrok ไปใส่ **Webhook URL** = `https://xxxx.ngrok-free.app/callback` -> Verify -> เปิด Use webhook -> เชิญบอทเข้ากลุ่ม
+6. Put the ngrok URL in **Webhook URL** = `https://xxxx.ngrok-free.app/callback` -> Verify -> turn on Use webhook -> invite the bot to a group
 
-ค่าเริ่มต้นใช้ LLM และ Places แบบ **ปลอม** (ร้านขึ้นต้นด้วย `[ตัวอย่าง]`) เพื่อเช็กว่า LINE ต่อติดก่อนโดยไม่เสียเงิน
+By default the LLM and Places are **fakes** (places start with `[ตัวอย่าง]`, "sample"), so you can check that LINE is wired up without spending money.
 
-### D) ใช้ Google จริง (เสียเงินตามการใช้งาน)
-1. Google Cloud Console -> สร้าง project -> เปิด **Billing** -> Enable **Places API (New)** -> สร้าง API key แล้ว restrict เฉพาะ Places API (New)
-2. ตั้ง **Quotas** ของ Places ต่อวัน (เช่น Text Search 300 ครั้ง/วัน) กันบิลบาน
-3. Gemini: <https://aistudio.google.com/> สร้าง key ใน project **ที่เปิด billing แล้ว (paid tier)**
-4. `.env`: `LLM_PROVIDER=gemini`, `PLACES_PROVIDER=google`, ใส่ key ทั้งสอง
+### D) Use real Google services (pay as you go)
+1. Google Cloud Console -> create a project -> enable **Billing** -> enable **Places API (New)** -> create an API key and restrict it to Places API (New) only
+2. Set daily **Quotas** for Places (for example Text Search 300 calls/day) so the bill cannot balloon
+3. Gemini: create a key at <https://aistudio.google.com/> in a project **that has billing enabled (paid tier)**
+4. `.env`: `LLM_PROVIDER=gemini`, `PLACES_PROVIDER=google`, and fill in both keys
 
-> **PDPA:** Gemini แบบฟรีอาจเอาข้อความไปพัฒนาโมเดล บอทจึง **ไม่อ่านแชตกลุ่ม** จนกว่าจะตั้ง `GEMINI_PAID_TIER_CONFIRMED=true`
-> (ตั้งเฉพาะเมื่อ project เปิด billing แล้วจริงๆ) ถ้าไม่ตั้ง บอททำงานแค่ตอนถูก @ และตอนกดปุ่ม (เซิร์ฟเวอร์เตือนตอนเริ่ม)
+> **PDPA:** the free Gemini tier may use text to improve its models, so the bot **does not read group chat** until
+> `GEMINI_PAID_TIER_CONFIRMED=true` is set (set it only when the project really has billing enabled). Without it the bot only acts when @mentioned
+> and when a button is pressed (the server warns at startup). The engine also honours `GEMINI_PAID_TIER=true` as its fail-closed check:
+> if the paid tier is not confirmed, no chat text is ever sent to Gemini, not even an @mention; the bot falls back to the offline rules
+> (see "Product rules" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 
 ## Environments: local vs AWS
 
 | | LOCAL | AWS (dev / prod) |
 |---|---|---|
-| ตัวรับ event | `scripts/local_server.py` + ngrok, หรือ `make simulate` | Lambda Function URL -> SQS FIFO -> Lambda worker |
-| Store | `STORE=memory` หรือ `postgres` | `dynamo` (DynamoDB, TTL attribute `ttl`) |
-| Secret | `.env` | SSM Parameter Store (SecureString) |
-| ค่าใช้จ่าย | 0 บาท (ถ้าใช้ของปลอม) | ตาม usage คุมด้วย budget ใน `template.yaml` |
-| Deploy | - | `make deploy-dev` (มือ) หรือ `deploy.yml` (ยังไม่เคยรัน) |
+| Event receiver | `scripts/local_server.py` + ngrok, or `make simulate` | Lambda Function URL -> SQS FIFO -> Lambda worker |
+| Store | `STORE=memory` or `postgres` | `dynamo` (DynamoDB, TTL attribute `ttl`) |
+| Secrets | `.env` | SSM Parameter Store (SecureString) |
+| Cost | 0 THB (with fakes) | pay per use, guarded by the budget in `template.yaml` |
+| Deploy | - | `make deploy-dev` (manual) or `deploy.yml` (never run yet) |
 
-รายละเอียดและตารางว่า "อะไรพิสูจน์ได้ที่ไหน": [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) · ขั้นตอน deploy ทีละบล็อก: [docs/DEPLOY.md](docs/DEPLOY.md) ·
-**ยังไม่เคย deploy จริง** (ไม่มี AWS credentials) ดู [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md)
+Details and a table of "what can be proven where": [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) · block-by-block deploy steps: [docs/DEPLOY.md](docs/DEPLOY.md) ·
+**Not deployed for real yet** (no AWS credentials); see [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md)
 
 ## Make targets
 
-| Target | ทำอะไร | ต้องมี |
+| Target | What it does | Needs |
 |---|---|---|
-| `make install` | ติดตั้ง `requirements-dev.txt` | pip |
-| `make test` | `pytest -q` ทั้งชุด (ตาม `STORE`, ค่าเริ่มต้น memory) | - |
-| `make cov` | เหมือน `test` + coverage, fail ถ้าต่ำกว่า `fail_under` (85), เขียน `coverage.xml` | - |
+| `make install` | install `requirements-dev.txt` | pip |
+| `make test` | whole `pytest -q` suite (follows `STORE`, default memory) | - |
+| `make cov` | same as `test` plus coverage; fails below `fail_under` (85); writes `coverage.xml` | - |
 | `make lint` | `ruff check .` | - |
-| `make sandbox` | scenario ทั้งหมด + determinism (5 รอบ) เขียน `reports/sandbox_report.md` | - |
-| `make template-lint` | `sam validate --lint` + `cfn-lint` (ข้ามพร้อมข้อความถ้าไม่ได้ติดตั้ง) | sam, cfn-lint |
-| `make ci` | **เหมือน PR pipeline**: `lint cov sandbox template-lint` บน memory store | - |
+| `make sandbox` | all scenarios + determinism check (5 runs); writes `reports/sandbox_report.md` | - |
+| `make template-lint` | `sam validate --lint` + `cfn-lint` (skipped with a message if not installed) | sam, cfn-lint |
+| `make ci` | **same as the PR pipeline**: `lint cov sandbox template-lint` on the memory store | - |
 | `make ci-full` | `ci` + `test-pg` | Postgres |
-| `make lint-actions` | `actionlint` ตรวจ `.github/workflows` | `pip install actionlint-py` |
-| `make simulate` | เล่นบทสนทนาจำลองใน terminal | - |
-| `make local` | เซิร์ฟเวอร์ LINE ในเครื่อง (`/callback` พอร์ต 8000) | `.env`, ngrok |
-| `make pg-up` / `pg-down` / `pg-reset` | เริ่ม/หยุด/ล้าง Postgres ในเครื่อง (`scripts/local_pg.sh`) | Postgres หรือ Docker |
-| `make test-pg` | เทสต์ทั้งชุด + contract บน Postgres | `pg-up` |
-| `make simulate-pg` | simulate บน Postgres | `pg-up` |
-| `make deploy-dev` | `sam build && sam deploy --config-env dev` (มือ ถามก่อนเปลี่ยน) | AWS credentials, `ALERT_EMAIL` |
+| `make lint-actions` | `actionlint` over `.github/workflows` | `pip install actionlint-py` |
+| `make simulate` | play the simulated conversation in the terminal | - |
+| `make local` | local LINE server (`/callback`, port 8000) | `.env`, ngrok |
+| `make pg-up` / `pg-down` / `pg-reset` | start / stop / wipe local Postgres (`scripts/local_pg.sh`) | Postgres or Docker |
+| `make test-pg` | whole suite + contract tests on Postgres | `pg-up` |
+| `make simulate-pg` | simulate on Postgres | `pg-up` |
+| `make deploy-dev` | `sam build && sam deploy --config-env dev` (manual, asks before changes) | AWS credentials, `ALERT_EMAIL` |
 
 ## Config / environment variables
 
-อ่านใน `config.py` (`load_settings()`) · ตัวอย่างไฟล์: `.env.example` · `Settings` ใช้ pydantic validate ค่า (ค่านอกช่วงจะ error ตอนเริ่ม)
-"Secret" = ห้าม commit/ห้าม log; บน AWS มาจาก SSM ไม่ใช่ environment ตรงๆ
+Read in `config.py` (`load_settings()`) · example file: `.env.example` · `Settings` is validated with pydantic (out-of-range values fail at startup).
+"Secret" = never commit, never log; on AWS these come from SSM, not directly from the environment.
 
-| ตัวแปร | Field ใน `Settings` | Default | Required? | Secret? | ความหมาย |
+| Variable | `Settings` field | Default | Required? | Secret? | Meaning |
 |---|---|---|---|---|---|
-| `LINE_CHANNEL_SECRET` | `line_channel_secret` | `""` | ถ้า `LINE_PROVIDER=real` | **ใช่** | ใช้ตรวจ `x-line-signature` |
-| `LINE_CHANNEL_ACCESS_TOKEN` | `line_channel_access_token` | `""` | ถ้า `LINE_PROVIDER=real` | **ใช่** | ใช้เรียก LINE reply API |
-| `GEMINI_API_KEY` | `gemini_api_key` | `""` | ถ้า `LLM_PROVIDER=gemini` | **ใช่** | key ของ Gemini (ต้องเป็น project ที่เปิด billing) |
-| `GOOGLE_PLACES_API_KEY` | `google_places_api_key` | `""` | ถ้า `PLACES_PROVIDER=google` | **ใช่** | key ของ Places API (New) |
-| `LLM_PROVIDER` | `llm_provider` | `fake` | ไม่ | ไม่ | `fake` (กฎออฟไลน์) หรือ `gemini` |
-| `PLACES_PROVIDER` | `places_provider` | `fake` | ไม่ | ไม่ | `fake` หรือ `google` |
-| `LINE_PROVIDER` | `line_provider` | `fake` | ไม่ | ไม่ | `fake` (เก็บ reply ในหน่วยความจำ) หรือ `real`; `make local` บังคับเป็น `real` |
-| `STORE` (หรือ `STORE_PROVIDER`) | `store_provider` | `memory` | ไม่ | ไม่ | `memory` / `postgres` / `dynamo`; `STORE` ชนะ `STORE_PROVIDER`; AWS template ตั้ง `STORE_PROVIDER=dynamo` |
-| `DATABASE_URL` | `database_url` | `postgresql://pnd:pnd@localhost:54329/pnd` | ถ้า `STORE=postgres` นอกเครื่อง dev | **ใช่** ถ้าชี้ฐานข้อมูลจริง | DSN ของ Postgres |
-| `TABLE_NAME` | `table_name` | `pai-nhai-dee-wa-dev` | ถ้า `STORE=dynamo` | ไม่ | ชื่อตาราง DynamoDB (template ตั้งให้ตาม Stage) |
-| `GEMINI_MODEL` | `gemini_model` | `gemini-2.5-flash-lite` | ไม่ | ไม่ | รุ่นโมเดลที่ใช้สกัดสัญญาณ |
-| `GEMINI_PAID_TIER_CONFIRMED` | `gemini_paid_tier_confirmed` | `false` | **ต้องเป็น `true` ก่อนให้ Gemini อ่านแชต** | ไม่ | ยืนยันว่าเป็น paid tier (PDPA) ถ้าไม่ true บอทตอบแค่ @ และปุ่ม; ถ้า `LLM_PROVIDER=fake` ถือว่าอ่านได้เพราะไม่มีอะไรออกจากเครื่อง |
-| `BOT_ENABLED` | `bot_enabled` | `true` | ไม่ | ไม่ | kill switch: `false` = เงียบทั้งหมด (event ถูก ack ทิ้ง ไม่ retry) |
-| `SESSION_MINUTES` | `session_minutes` | `60` (ช่วง 5-120) | ไม่ | ไม่ | อายุ session |
-| `MAX_LLM_CALLS_PER_SESSION` | `max_llm_calls_per_session` | `40` | ไม่ | ไม่ | เกินแล้วใช้กฎฟรี |
-| `MAX_SEARCHES_PER_GROUP_PER_DAY` | `max_searches_per_group_per_day` | `10` | ไม่ | ไม่ | โควตาค้นต่อกลุ่มต่อวัน (เวลาไทย) |
-| `MAX_PLACES_CALLS_PER_DAY` | `max_places_calls_per_day` | `300` | ไม่ | ไม่ | โควตา Places รวมทุกกลุ่มต่อวัน (นับ geocode ด้วย) |
-| (ไม่มี env) | `default_radius_km` | `3.0` | - | - | ค่าตายตัวใน `Settings`; รัศมีจริงต่อชนิดงานอยู่ที่ `features/food.py` (3 กม.) และ `features/activity.py` (5 กม.) |
+| `LINE_CHANNEL_SECRET` | `line_channel_secret` | `""` | if `LINE_PROVIDER=real` | **yes** | verifies `x-line-signature` |
+| `LINE_CHANNEL_ACCESS_TOKEN` | `line_channel_access_token` | `""` | if `LINE_PROVIDER=real` | **yes** | calls the LINE reply API |
+| `GEMINI_API_KEY` | `gemini_api_key` | `""` | if `LLM_PROVIDER=gemini` | **yes** | Gemini key (project must have billing enabled) |
+| `GOOGLE_PLACES_API_KEY` | `google_places_api_key` | `""` | if `PLACES_PROVIDER=google` | **yes** | Places API (New) key |
+| `LLM_PROVIDER` | `llm_provider` | `fake` | no | no | `fake` (offline rules) or `gemini` |
+| `PLACES_PROVIDER` | `places_provider` | `fake` | no | no | `fake` or `google` |
+| `LINE_PROVIDER` | `line_provider` | `fake` | no | no | `fake` (replies kept in memory) or `real`; `make local` forces `real` |
+| `STORE` (or `STORE_PROVIDER`) | `store_provider` | `memory` | no | no | `memory` / `postgres` / `dynamo`; `STORE` wins over `STORE_PROVIDER`; the AWS template sets `STORE_PROVIDER=dynamo` |
+| `DATABASE_URL` | `database_url` | `postgresql://pnd:pnd@localhost:54329/pnd` | if `STORE=postgres` outside a dev machine | **yes** if it points at a real database | Postgres DSN |
+| `TABLE_NAME` | `table_name` | `pai-nhai-dee-wa-dev` | if `STORE=dynamo` | no | DynamoDB table name (the template sets it per Stage) |
+| `GEMINI_MODEL` | `gemini_model` | `gemini-2.5-flash-lite` | no | no | model used for signal extraction |
+| `GEMINI_PAID_TIER_CONFIRMED` | `gemini_paid_tier_confirmed` | `false` | **must be `true` before Gemini may read chat** | no | confirms the paid tier (PDPA). If not true the bot only answers @mentions and buttons; with `LLM_PROVIDER=fake` reading is allowed because nothing leaves the machine. The engine also accepts `GEMINI_PAID_TIER=true` (read at runtime, fail-closed) |
+| `BOT_ENABLED` | `bot_enabled` | `true` | no | no | kill switch: `false` = completely silent (events are acked and dropped, no retry) |
+| `SESSION_MINUTES` | `session_minutes` | `60` (range 5-120) | no | no | session lifetime |
+| `MAX_LLM_CALLS_PER_SESSION` | `max_llm_calls_per_session` | `40` | no | no | beyond this the free rules take over |
+| `MAX_SEARCHES_PER_GROUP_PER_DAY` | `max_searches_per_group_per_day` | `10` | no | no | per-group daily search quota (Thai time) |
+| `MAX_PLACES_CALLS_PER_DAY` | `max_places_calls_per_day` | `300` | no | no | daily Places quota across all groups (geocode lookups count too) |
+| (no env var) | `default_radius_km` | `3.0` | - | - | fixed value in `Settings`; the real radius per kind of task lives in `features/food.py` (3 km) and `features/activity.py` (5 km) |
 
-ตัวแปรเฉพาะ AWS / เครื่องมือ (ไม่อยู่ใน `config.py`):
+AWS / tooling-only variables (not in `config.py`):
 
-| ตัวแปร | ใช้ที่ | ความหมาย |
+| Variable | Used by | Meaning |
 |---|---|---|
-| `QUEUE_URL` | `handlers/webhook.py` | URL ของ SQS FIFO (template ตั้งให้; ไม่มี = `KeyError`) |
-| `LINE_CHANNEL_SECRET_PARAM`, `LINE_CHANNEL_ACCESS_TOKEN_PARAM`, `GEMINI_API_KEY_PARAM`, `GOOGLE_PLACES_API_KEY_PARAM` | `handlers/ssm.py` | **ชื่อ** SSM parameter (ไม่ใช่ค่า secret) ที่ Lambda จะอ่านตอน cold start; webhook อ่านได้แค่ตัวแรก, worker อ่านอีกสามตัว |
+| `QUEUE_URL` | `handlers/webhook.py` | URL of the SQS FIFO queue (set by the template; missing = `KeyError`) |
+| `LINE_CHANNEL_SECRET_PARAM`, `LINE_CHANNEL_ACCESS_TOKEN_PARAM`, `GEMINI_API_KEY_PARAM`, `GOOGLE_PLACES_API_KEY_PARAM` | `handlers/ssm.py` | **names** of the SSM parameters (not the secret values) that Lambda reads at cold start; the webhook can read only the first one, the worker reads the other three |
 | `STAGE` | template | `dev` / `prod` |
-| `PND_PG_PORT`, `PND_PG_DIR`, `PG_BIN` | `scripts/local_pg.sh` | พอร์ต (54329), โฟลเดอร์ข้อมูล (`/tmp/pnd-pg`), path ของ binary Postgres |
-| `PYTHONHASHSEED` | `regression.yml` | สลับ seed เพื่อจับบั๊กที่ขึ้นกับลำดับ set/dict |
+| `PND_PG_PORT`, `PND_PG_DIR`, `PG_BIN` | `scripts/local_pg.sh` | port (54329), data folder (`/tmp/pnd-pg`), path to the Postgres binaries |
+| `PYTHONHASHSEED` | `regression.yml` | varies the seed to catch bugs that depend on set/dict ordering |
 
-SAM parameters (`template.yaml`): `Stage`, `AlertEmail` (บังคับ), `MonthlyBudgetUsd` (28), `LlmProvider`, `PlacesProvider`, `GeminiPaidTierConfirmed`, `BotEnabled`, `MaxPlacesCallsPerDay`, `WebhookReservedConcurrency` (10), `WorkerReservedConcurrency` (5)
+SAM parameters (`template.yaml`): `Stage`, `AlertEmail` (required), `MonthlyBudgetUsd` (28), `LlmProvider`, `PlacesProvider`, `GeminiPaidTierConfirmed`, `BotEnabled`, `MaxPlacesCallsPerDay`, `WebhookReservedConcurrency` (10), `WorkerReservedConcurrency` (5)
 
-## Cost guards (คุมงบ 1,000 บาท/เดือน)
+## Cost guards (keeping within 1,000 THB/month)
 
-| ตัวคุม | ค่าเริ่มต้น | ตั้งที่ | ทำงานที่ |
+| Guard | Default | Set at | Enforced in |
 |---|---|---|---|
-| Kill switch ปิดบอททั้งหมด | `BOT_ENABLED=true` | `.env` / SAM `BotEnabled` | `SessionEngine.handle` |
-| LLM ต่อ session | 40 ครั้ง แล้วใช้กฎฟรีแทน | `MAX_LLM_CALLS_PER_SESSION` | `SessionEngine._extract` |
-| ค้นหาต่อกลุ่มต่อวัน | 10 | `MAX_SEARCHES_PER_GROUP_PER_DAY` | `SessionEngine._search_replies` |
-| Places รวมทุกกลุ่มต่อวัน | 300 (นับทุกครั้งที่เรียก รวม geocode) | `MAX_PLACES_CALLS_PER_DAY` | `SessionEngine._search_replies` (`spend`) |
-| ต้อง paid tier ก่อนอ่านแชต | `false` | `GEMINI_PAID_TIER_CONFIRMED` | `Settings.chat_reading_enabled` |
-| Concurrency Lambda | webhook 10 / worker 5 | SAM parameters | `template.yaml` (บัญชีใหม่ที่โควตา < 120 ใช้ `-1` ดู DEPLOY.md) |
-| แจ้งเตือนงบ AWS | USD 28 (~1,000 บาท) | `MonthlyBudgetUsd` | `template.yaml` (แจ้งเตือนอย่างเดียว ไม่ตัดบริการ) |
-| Push message | ไม่ใช้เลย | - | ตอบด้วย reply token เท่านั้น |
-| ย่านยอดฮิต | มีพิกัดในโค้ด ไม่เสีย geocode | `features/geo.AREA_CENTERS` | `features/search.py` |
+| Kill switch (turns the whole bot off) | `BOT_ENABLED=true` | `.env` / SAM `BotEnabled` | `SessionEngine.handle` |
+| LLM calls per session | 40, then the free rules take over | `MAX_LLM_CALLS_PER_SESSION` | `SessionEngine._extract` |
+| Searches per group per day | 10 | `MAX_SEARCHES_PER_GROUP_PER_DAY` | `SessionEngine._search_replies` |
+| Places calls per day, all groups | 300 (every call counts, geocode included) | `MAX_PLACES_CALLS_PER_DAY` | `SessionEngine._search_replies` (`spend`) |
+| Paid tier required before reading chat | `false` | `GEMINI_PAID_TIER_CONFIRMED` | `Settings.chat_reading_enabled` |
+| Lambda concurrency | webhook 10 / worker 5 | SAM parameters | `template.yaml` (new accounts with a quota below 120: use `-1`, see DEPLOY.md) |
+| AWS budget alert | USD 28 (~1,000 THB) | `MonthlyBudgetUsd` | `template.yaml` (alert only, it does not cut service) |
+| Push messages | never used | - | replies use the reply token only |
+| Popular areas | coordinates are in the code, no geocode cost | `features/geo.AREA_CENTERS` | `features/search.py` |
 
-เทสต์ที่พิสูจน์ตัวคุมเหล่านี้: `tests/integration/test_caps.py` และ scenario SBX-39..43 ใน `tests/sandbox/`
+Tests that prove these guards: `tests/integration/test_caps.py` and scenarios SBX-39..43 in `tests/sandbox/`
 
 ## Testing overview
 
-| ชั้น | อยู่ที่ | พิสูจน์อะไร | รันเมื่อ |
+| Layer | Where | What it proves | Runs |
 |---|---|---|---|
-| Unit | `tests/unit/` | ลอจิกย่อย: prefilter, merge, extractor rules, geo, ack, webhook/worker handler | ทุก PR |
-| Integration | `tests/integration/` | engine ทั้งก้อนกับของปลอม, caps, bugfix regression, DynamoDB ผ่าน moto | ทุก PR |
-| Contract | `tests/contract/` | Store ทั้ง 3 ตัวประพฤติเหมือนกัน | ทุก PR (Postgres job) |
-| Sandbox | `tests/sandbox/` + `make sandbox` | บทสนทนาทั้งเรื่อง 60+ เคส + determinism ทุก byte | ทุก PR + nightly (5 hash seed) |
-| Intent eval | `scripts/eval_intents.py` | ความแม่นของการอ่านภาษาไทย วัดเป็น % | nightly / ก่อน release |
-| Smoke | `scripts/smoke.py` | หลัง deploy: Function URL ตอบ 200/401 ถูก | หลัง deploy เท่านั้น |
+| Unit | `tests/unit/` | small pieces of logic: prefilter, merge, extractor rules, geo, ack, webhook/worker handlers | every PR |
+| Integration | `tests/integration/` | the whole engine with fakes, caps, bug-fix regressions, DynamoDB via moto | every PR |
+| Contract | `tests/contract/` | all 3 Stores behave identically | every PR (Postgres job) |
+| Sandbox | `tests/sandbox/` + `make sandbox` | full conversations, 72 cases, plus byte-for-byte determinism | every PR + nightly (5 hash seeds) |
+| Intent eval | `scripts/eval_intents.py` | accuracy of Thai understanding, measured in % | nightly / before a release |
+| Smoke | `scripts/smoke.py` | after deploy: the Function URL answers 200/401 correctly | after deploy only |
 
-กลยุทธ์ครบ (pyramid, coverage, flaky policy, definition of done, release gate): [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) ·
-นโยบายความหมายของ "deterministic" และระดับความรุนแรง P0-P3: [docs/TEST_POLICY.md](docs/TEST_POLICY.md) ·
-คอร์สเทสทีละ Level: [docs/TESTING.md](docs/TESTING.md) · ตาราง 72 เคส: [docs/TEST_SPEC.md](docs/TEST_SPEC.md) · อธิบายโค้ดเทสต์: [tests/README.md](tests/README.md)
+Full strategy (pyramid, coverage, flaky-test policy, definition of done, release gate): [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) ·
+what "deterministic" means and the P0-P3 severity levels: [docs/TEST_POLICY.md](docs/TEST_POLICY.md) ·
+testing course, level by level: [docs/TESTING.md](docs/TESTING.md) · table of the 72 cases: [docs/TEST_SPEC.md](docs/TEST_SPEC.md) · test code explained: [tests/README.md](tests/README.md)
 
 ## CI/CD overview
 
-| Workflow | Trigger | ทำอะไร |
+| Workflow | Trigger | What it does |
 |---|---|---|
-| `.github/workflows/ci.yml` | PR + push main | ruff · unit+integration (memory) · contract + full suite บน Postgres 16 + coverage artifact · `make sandbox` · `sam validate --lint` + `cfn-lint` + `sam build` (cache) · actionlint · job รวม `ci ok` สำหรับ branch protection |
-| `.github/workflows/regression.yml` | nightly 02:00 (เวลาไทย) + manual | full suite x Postgres · sandbox x 5 hash seeds · intent eval (ขั้นต่ำ 90%) · อัปโหลด report · เปิด/อัปเดต issue `nightly-regression` เมื่อพัง |
-| `.github/workflows/deploy.yml` | manual เท่านั้น | **ปิดไว้/ยังไม่เคยทดสอบ** (ยังไม่มี AWS): environment gate -> OIDC (`AWS_ROLE_ARN`) -> `sam build/deploy` -> `scripts.smoke` |
-| `.github/dependabot.yml` | รายสัปดาห์ | อัปเดต GitHub Actions + pip |
+| `.github/workflows/ci.yml` | PR + push to main | ruff · unit+integration (memory) · contract + full suite on Postgres 16 + coverage artifact · `make sandbox` · `sam validate --lint` + `cfn-lint` + `sam build` (cached) · actionlint · a combined `ci ok` job for branch protection |
+| `.github/workflows/regression.yml` | nightly 02:00 (Thai time) + manual | full suite x Postgres · sandbox x 5 hash seeds · intent eval (minimum 90%) · uploads the report · opens/updates a `nightly-regression` issue on failure |
+| `.github/workflows/deploy.yml` | manual only | **disabled / never tested** (no AWS yet): environment gate -> OIDC (`AWS_ROLE_ARN`) -> `sam build/deploy` -> `scripts.smoke` |
+| `.github/dependabot.yml` | weekly | updates GitHub Actions + pip |
 
-ตั้ง branch protection ของ `main` ให้ require check **`ci ok`** · ทุกอย่างบน GitHub Actions **ยังไม่เคยรันจริงบน GitHub** (ตรวจด้วย actionlint + YAML เท่านั้น)
+Set branch protection on `main` to require the **`ci ok`** check · nothing on GitHub Actions has **actually run on GitHub yet** (checked only with actionlint + YAML parsing)
 
 ## Repo map
 
 ```
 .
 ├── config.py            Settings + load_settings() + load_dotenv()
-├── wiring.py            build_engine(): จุดเดียวที่เลือก real vs fake provider
-├── handlers/            Lambda entry points (webhook, worker, ssm)          -> handlers/README.md
-├── session/             SessionEngine (state machine), prefilter, merge     -> session/README.md
+├── wiring.py            build_engine(): the single place that picks real vs fake providers
+├── handlers/            Lambda entry points (webhook, worker, ssm)           -> handlers/README.md
+├── session/             SessionEngine (state machine), prefilter, merge      -> session/README.md
 ├── features/            search/rank, cards (LINE Flex), geo                  -> features/README.md
 ├── adapters/            LLM (Gemini + rules), Places, LINE gateway, lexicon  -> adapters/README.md
 ├── store/               memory / postgres / dynamo + schema.sql              -> store/README.md
 ├── scripts/             simulate, local_server, smoke, eval_intents, local_pg -> scripts/README.md
-├── tests/               unit, integration, contract, sandbox, eval          -> tests/README.md
+├── tests/               unit, integration, contract, sandbox, eval           -> tests/README.md
 ├── docs/                ARCHITECTURE, ENVIRONMENTS, DEPLOY, TEST_*, modules/INDEX.md
-├── reports/             sandbox_report.md (สร้างโดย make sandbox), QA reports
-├── template.yaml        AWS SAM (Lambda x2, SQS FIFO + DLQ, DynamoDB, alarms, budget)
-├── samconfig.toml       ค่า deploy ต่อ stage (dev/prod)
-├── docker-compose.yml   Postgres 16 สำหรับ local/CI
+├── reports/             sandbox_report.md (generated by make sandbox), QA reports
+├── template.yaml        AWS SAM (2 Lambdas, SQS FIFO + DLQ, DynamoDB, alarms, budget)
+├── samconfig.toml       per-stage deploy settings (dev/prod)
+├── docker-compose.yml   Postgres 16 for local/CI
 └── .github/             workflows, dependabot, CODEOWNERS, PR template
 ```
 
 ## Troubleshooting
 
-| อาการ | สาเหตุที่พบบ่อย | วิธีแก้ |
+| Symptom | Usual cause | Fix |
 |---|---|---|
-| `make test-pg` skip เทสต์ Postgres พร้อมข้อความ `run make pg-up first` | Postgres ไม่ขึ้น | `make pg-up` (หรือ `docker compose up -d`) แล้วเช็ก `DATABASE_URL` |
-| `make pg-up` บอกหา binary ไม่เจอ | ไม่ได้ติดตั้ง Postgres | macOS: `brew install postgresql@16` หรือใช้ `docker compose up -d` |
-| บอทไม่ตอบในกลุ่ม (local) | webhook URL ผิด/ngrok เปลี่ยน URL, ยังไม่เปิด "Allow bot to join group chats", Auto-reply เปิดอยู่ | ตั้ง Webhook URL ใหม่แล้วกด Verify; ดู log ของ `make local` |
-| บอทตอบแค่ตอน @ ไม่อ่านแชต | `GEMINI_PAID_TIER_CONFIRMED` ไม่ใช่ `true` (ออกแบบไว้ตาม PDPA) | ตั้งหลังเปิด billing ของ Gemini แล้วเท่านั้น หรือใช้ `LLM_PROVIDER=fake` ตอนทดสอบ |
-| บอทเงียบทั้งหมด | `BOT_ENABLED=false` | ตั้งเป็น `true` |
-| เซิร์ฟเวอร์เตือน `... missing` ตอนเริ่ม | ตั้ง provider จริงแต่ไม่ใส่ key | ใส่ key ใน `.env` หรือกลับไป `fake` |
-| 401 จาก webhook | Channel secret ไม่ตรง / body ถูกแก้ก่อนตรวจ signature | เช็ก secret ของ channel ที่ถูกตัว (dev vs prod) |
-| ขึ้น "วันนี้ค้นครบ N ครั้งแล้ว" | ชนโควตา `MAX_SEARCHES_PER_GROUP_PER_DAY` | รอวันถัดไป (เวลาไทย) หรือปรับค่า |
-| `make sandbox` ออก 1 พร้อม `XPASS` | บั๊กที่ track ไว้ถูกแก้แล้ว | ลบ `bug:` ออกจาก scenario นั้น (ดู docs/TEST_POLICY.md ข้อ 6) |
-| `make sandbox` ออก 1 พร้อม `determinism` | โค้ดขึ้นกับลำดับ set/dict/เวลา/uuid | ดู diff ใน `reports/sandbox_report.md` ตัดสินด้วย key คงที่ (เช่น `place_id`) |
-| `make ci` ข้าม template lint | ไม่ได้ติดตั้ง `sam` / `cfn-lint` | `brew install aws-sam-cli` และ `pip install cfn-lint` |
-| coverage ต่ำกว่า 85% | เพิ่มโค้ดโดยไม่มีเทสต์ | เพิ่มเทสต์ (ดู docs/TEST_STRATEGY.md) อย่าลดค่า `fail_under` เพื่อให้เขียว |
-| `sam build` พังบน Mac | Python ไม่ใช่ 3.12 | `brew install python@3.12` ดู docs/DEPLOY.md หัวข้อแก้ปัญหา |
-| Lambda: ตั้ง reserved concurrency ไม่ได้ | บัญชี AWS ใหม่โควตารวมต่ำ | ใช้ `WebhookReservedConcurrency=-1 WorkerReservedConcurrency=-1` (docs/DEPLOY.md ข้อ 1.7) |
+| `make test-pg` skips the Postgres tests with `run make pg-up first` | Postgres is not running | `make pg-up` (or `docker compose up -d`), then check `DATABASE_URL` |
+| `make pg-up` says it cannot find the binaries | Postgres is not installed | macOS: `brew install postgresql@16`, or use `docker compose up -d` |
+| Bot does not answer in the group (local) | wrong webhook URL / ngrok URL changed, "Allow bot to join group chats" not on, Auto-reply still on | set the Webhook URL again and press Verify; check the `make local` log |
+| Bot answers only when @mentioned and does not read the chat | `GEMINI_PAID_TIER_CONFIRMED` (or `GEMINI_PAID_TIER`) is not `true` (by design, PDPA) | set it only after Gemini billing is enabled, or use `LLM_PROVIDER=fake` while testing |
+| Bot is completely silent | `BOT_ENABLED=false` | set it to `true` |
+| Server warns `... missing` at startup | a real provider is selected but its key is not set | put the key in `.env` or go back to `fake` |
+| 401 from the webhook | wrong channel secret / body changed before the signature check | check the secret of the right channel (dev vs prod) |
+| "today's N searches are used up" appears (Thai text) | the `MAX_SEARCHES_PER_GROUP_PER_DAY` quota was hit | wait until tomorrow (Thai time) or raise the value |
+| `make sandbox` exits 1 with `XPASS` | a tracked bug has been fixed | remove `bug:` from that scenario (see docs/TEST_POLICY.md item 6) |
+| `make sandbox` exits 1 with `determinism` | code depends on set/dict order, time or uuid | see the diff in `reports/sandbox_report.md` and decide with a stable key (for example `place_id`) |
+| `make ci` skips template lint | `sam` / `cfn-lint` not installed | `brew install aws-sam-cli` and `pip install cfn-lint` |
+| coverage below 85% | code added without tests | add tests (see docs/TEST_STRATEGY.md); do not lower `fail_under` just to get green |
+| `sam build` fails on a Mac | Python is not 3.12 | `brew install python@3.12`; see the troubleshooting section of docs/DEPLOY.md |
+| Lambda: cannot set reserved concurrency | new AWS account with a low account-wide quota | use `WebhookReservedConcurrency=-1 WorkerReservedConcurrency=-1` (docs/DEPLOY.md item 1.7) |
 
-## Contributing (branching, commit)
+## Contributing (branching, commits)
 
-- **Branch**: แตกจาก `main` ชื่อ `type/short-description` เช่น `feat/radius-meters`, `fix/dedup-hash`, `docs/test-strategy`, `ci/nightly` · ห้าม push ตรงเข้า `main` เมื่อเปิด branch protection · PR เล็กและทำเรื่องเดียว
-- **Commit**: [Conventional Commits](https://www.conventionalcommits.org/) `type(scope): summary` (ภาษาอังกฤษ ไม่เกิน ~72 ตัวอักษร) type = `feat | fix | test | docs | ci | refactor | chore | perf`
-  scope เช่น `session`, `adapters`, `store`, `handlers`, `sandbox`, `deploy` · body อธิบาย "ทำไม" ไม่ใช่ "ทำอะไร"
-- **ก่อนเปิด PR**: `make ci` ต้องเขียว (ถ้าแตะ store ให้ `make ci-full`) · ใช้ [PR template](.github/PULL_REQUEST_TEMPLATE.md)
-- **ทุกบั๊กต้องมีเทส**: เพิ่ม scenario ใน `tests/sandbox/scenarios/` หรือ unit test ก่อนแก้ (ดู docs/TEST_POLICY.md ข้อ 6)
-- **ห้าม**: commit `.env` / key จริง, log หรือเก็บข้อความแชตดิบ, ลดเพดานงบ/ปิด guard โดยไม่อธิบายใน PR, แก้ expectation ของเทสต์ให้ตรงกับพฤติกรรมที่ผิดเพื่อให้เขียว
-- **Review**: `CODEOWNERS` กำหนดเจ้าของ; ไฟล์ `template.yaml`, `config.py`, `.github/` ต้องผ่านเจ้าของ repo
-- **เพิ่ม provider/store ใหม่**: ดู "How to extend" ใน [adapters/README.md](adapters/README.md) และ [store/README.md](store/README.md)
+- **Branch**: branch from `main` as `type/short-description`, for example `feat/radius-meters`, `fix/dedup-hash`, `docs/test-strategy`, `ci/nightly` · no direct pushes to `main` once branch protection is on · keep PRs small and about one thing
+- **Commit**: [Conventional Commits](https://www.conventionalcommits.org/) `type(scope): summary` (English, at most ~72 characters) where type is `feat | fix | test | docs | ci | refactor | chore | perf`
+  and scope is for example `session`, `adapters`, `store`, `handlers`, `sandbox`, `deploy` · the body explains "why", not "what"
+- **Before opening a PR**: `make ci` must be green (run `make ci-full` if you touched the store) · use the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
+- **Every bug needs a test**: add a scenario in `tests/sandbox/scenarios/` or a unit test before fixing (see docs/TEST_POLICY.md item 6)
+- **Never**: commit `.env` or real keys, log or store raw chat text, lower a budget cap or disable a guard without explaining it in the PR, or change a test's expectation to match wrong behaviour just to get green
+- **Review**: `CODEOWNERS` assigns owners; changes to `template.yaml`, `config.py` and `.github/` must go through the repo owner
+- **Adding a new provider/store**: see "How to extend" in [adapters/README.md](adapters/README.md) and [store/README.md](store/README.md)
 
-## เอกสารทั้งหมด
+## All documents
 
-| เอกสาร | เรื่อง |
+| Document | About |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | flow, state machine, stored state, failure modes |
-| [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) | local (Postgres) vs AWS, อะไรพิสูจน์ที่ไหน |
-| [docs/DEPLOY.md](docs/DEPLOY.md) | runbook deploy ขึ้น AWS |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | flow, state machine, stored state, failure modes, product rules |
+| [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) | local (Postgres) vs AWS, what is proven where |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | runbook for deploying to AWS |
 | [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) | Gate 0 go/no-go, PDPA |
-| [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) | pyramid, ชุดเทสต์ต่อ PR/nightly/release, coverage, flaky, DoD |
-| [docs/TEST_POLICY.md](docs/TEST_POLICY.md) | deterministic, กติกา sandbox, ระดับ P0-P3, gates |
-| [docs/TEST_SPEC.md](docs/TEST_SPEC.md) | ตารางเคสทดสอบ sandbox |
-| [docs/TESTING.md](docs/TESTING.md) | คอร์สเทส Level 0-5 สำหรับมือใหม่ |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | งานที่ค้าง (เจ้าของคือทีมอื่น; ถ้ายังไม่มีไฟล์ แปลว่ากำลังสร้าง) |
-| [docs/modules/INDEX.md](docs/modules/INDEX.md) | สารบัญเอกสารโมดูลทุกตัว |
-| [reports/QA_REPORT_round1.md](reports/QA_REPORT_round1.md) | รายงาน QA รอบ 1 |
+| [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) | pyramid, suites per PR/nightly/release, coverage, flaky tests, definition of done |
+| [docs/TEST_POLICY.md](docs/TEST_POLICY.md) | determinism, sandbox rules, severity P0-P3, gates |
+| [docs/TEST_SPEC.md](docs/TEST_SPEC.md) | table of sandbox test cases |
+| [docs/TESTING.md](docs/TESTING.md) | Level 0-5 testing course for beginners |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | open work and deferred product decisions |
+| [docs/modules/INDEX.md](docs/modules/INDEX.md) | index of every module's documentation |
+| [reports/QA_REPORT_round1.md](reports/QA_REPORT_round1.md) | QA report, round 1 |
+| [reports/QA_REPORT_final.md](reports/QA_REPORT_final.md) | QA report, final gate |
