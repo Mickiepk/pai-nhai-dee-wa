@@ -6,9 +6,6 @@ It **only reads while a help-me-decide session is open (max 60 minutes) and neve
 > The bot's name and its chat messages are in Thai on purpose: that is the product's user-facing language.
 > Example inputs below (for instance `@bot กินไรดีแถวอารีย์`, "what should we eat around Ari") are real Thai phrases the bot understands. Everything else in this repo is documented in English.
 
-[![ci](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/ci.yml/badge.svg)](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/ci.yml)
-[![regression](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/regression.yml/badge.svg)](https://github.com/Mickiepk/pai-nhai-dee-wa/actions/workflows/regression.yml)
-
 > **Summary.** A conversational LINE group-chat bot (Python 3.12, line-bot-sdk v3, Gemini for preference extraction,
 > Google Places API (New), DynamoDB on AWS / Postgres locally, AWS SAM). `@bot กินไรดีแถวอารีย์` starts a 60-minute *session*:
 > the bot announces it is listening, extracts preferences only (never stores chat text), speaks only when @mentioned or when
@@ -156,7 +153,7 @@ Details and a table of "what can be proven where": [docs/ENVIRONMENTS.md](docs/E
 | `make lint` | `ruff check .` | - |
 | `make sandbox` | all scenarios + determinism check (5 runs); writes `reports/sandbox_report.md` | - |
 | `make template-lint` | `sam validate --lint` + `cfn-lint` (skipped with a message if not installed) | sam, cfn-lint |
-| `make ci` | **same as the PR pipeline**: `lint cov sandbox template-lint` on the memory store | - |
+| `make ci` | **the local equivalent of the old PR pipeline**: `lint cov sandbox template-lint` on the memory store | - |
 | `make ci-full` | `ci` + `test-pg` | Postgres |
 | `make lint-actions` | `actionlint` over `.github/workflows` | `pip install actionlint-py` |
 | `make simulate` | play the simulated conversation in the terminal | - |
@@ -237,14 +234,11 @@ testing course, level by level: [docs/TESTING.md](docs/TESTING.md) · table of t
 
 ## CI/CD overview
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `.github/workflows/ci.yml` | PR + push to main | ruff · unit+integration (memory) · contract + full suite on Postgres 16 + coverage artifact · `make sandbox` · `sam validate --lint` + `cfn-lint` + `sam build` (cached) · actionlint · a combined `ci ok` job for branch protection |
-| `.github/workflows/regression.yml` | nightly 02:00 (Thai time) + manual | full suite x Postgres · sandbox x 5 hash seeds · intent eval (minimum 90%) · uploads the report · opens/updates a `nightly-regression` issue on failure |
-| `.github/workflows/deploy.yml` | manual only | **disabled / never tested** (no AWS yet): environment gate -> OIDC (`AWS_ROLE_ARN`) -> `sam build/deploy` -> `scripts.smoke` |
-| `.github/dependabot.yml` | weekly | updates GitHub Actions + pip |
+**GitHub Actions are removed for now** (the GitHub account has a billing lock, so runs never started). The workflows (`ci.yml`, `regression.yml`, `deploy.yml`) are still in git history: restore them with
+`git checkout 6db7c59 -- .github/workflows` when billing is fixed.
 
-Set branch protection on `main` to require the **`ci ok`** check · nothing on GitHub Actions has **actually run on GitHub yet** (checked only with actionlint + YAML parsing)
+Until then, run the same checks locally before every push: `make ci` (add `make ci-full` if you touched the store), and `make sandbox` for the determinism check. Deploys are manual with `make deploy-dev` ([docs/DEPLOY.md](docs/DEPLOY.md)).
+`.github/dependabot.yml`, `CODEOWNERS` and the PR template are kept.
 
 ## Repo map
 
