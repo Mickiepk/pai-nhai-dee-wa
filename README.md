@@ -105,16 +105,17 @@ make pg-down              # stop   (make pg-reset = wipe all data)
 Default URL `postgresql://pnd:pnd@localhost:54329/pnd`; tables are created automatically (`store/schema.sql`)
 
 ### C) Try it with real LINE (no AWS needed yet)
-1. <https://developers.line.biz/console/> -> Provider -> create a **Messaging API** channel (keep dev and prod separate)
-2. **Basic settings**: copy the **Channel secret** · **Messaging API**: issue a **Channel access token (long-lived)**
-3. LINE Official Account Manager -> Settings -> Account settings -> turn on **Allow bot to join group chats**
-4. Response settings: turn off **Auto-reply** and **Greeting message**, turn on **Webhook**
-5. ```bash
+1. <https://manager.line.biz/> -> create a **LINE Official Account** (keep dev and prod as separate accounts). LINE no longer lets you create a Messaging API channel directly in the developers console.
+2. In Official Account Manager: Settings -> **Messaging API** -> **Enable Messaging API** -> create or pick a Provider (a channel cannot be moved to another provider later)
+3. <https://developers.line.biz/console/> (same login) -> your Provider -> the channel. **Basic settings**: copy the **Channel secret** · **Messaging API** tab: issue a **Channel access token (long-lived)**
+4. Official Account Manager -> Settings -> Account settings -> turn on **Allow bot to join group chats** (older UI wording: *Group and multi-person chats*)
+5. Response settings: turn off **Auto-reply** and **Greeting message**, turn on **Webhook**
+6. ```bash
    cp .env.example .env      # fill in LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN
    make local                # http://localhost:8000/callback
    ngrok http 8000           # in another window
    ```
-6. Put the ngrok URL in **Webhook URL** = `https://xxxx.ngrok-free.app/callback` -> Verify -> turn on Use webhook -> invite the bot to a group
+7. Put the ngrok URL in **Webhook URL** = `https://xxxx.ngrok-free.app/callback` -> Verify -> turn on Use webhook -> invite the bot to a group
 
 By default the LLM and Places are **fakes** (places start with `[ตัวอย่าง]`, "sample"), so you can check that LINE is wired up without spending money.
 
